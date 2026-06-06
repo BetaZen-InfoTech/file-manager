@@ -35,12 +35,16 @@ middleware.ts         security headers + request id
 
 ---
 
-## 🚀 One-click install on a blank Ubuntu VPS
+## 🚀 Single-file install on a blank Ubuntu VPS
 
-Point your DNS A record at the VPS first (`files.yourdomain.com → 1.2.3.4`), then **paste this one command**:
+**One script does everything**: [`scripts/setup.sh`](scripts/setup.sh) — base packages, Node 20, Docker, MinIO, Mongo, Nginx, Certbot SSL, PM2 boot-time autostart, auto-generated `.env` with strong random secrets, super_admin seed, cron jobs, and a post-install health check. ~5–10 min. Idempotent (safe to re-run).
+
+### Public repo — one command
+
+Point DNS at the VPS first, then:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/bootstrap.sh \
+curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/setup.sh \
   | sudo bash -s -- \
       --domain files.yourdomain.com \
       --email you@yourdomain.com \
@@ -48,47 +52,68 @@ curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/
       --admin-pass 'StrongPassword123'
 ```
 
-The bootstrap does everything: apt update → Node 20 + Docker + Nginx + Certbot + PM2 →
-clone repo → **auto-generate `.env` with random secrets** (chmod 600) → start Mongo + MinIO via compose →
-`npm ci && npm test && npm run build` → seed super_admin → Nginx vhost + Let's Encrypt SSL →
-install cron jobs → PM2 boot-time autostart. Takes ~5–10 minutes. **Idempotent — safe to re-run.**
+### Private repo — clone first, then run
 
-When it finishes, hit `https://files.yourdomain.com/login`. The end-of-run summary prints
-the auto-generated GitHub webhook secret to paste into your repo's Settings → Webhooks.
+Because the raw script isn't fetchable without auth, set up a deploy key once (instructions in §"Private repo setup" below), then:
 
-**bootstrap.sh flags:**
+```bash
+sudo git clone git@github.com:BetaZen-InfoTech/file-manager.git /var/www/app
+sudo bash /var/www/app/scripts/setup.sh \
+  --domain cdn.betazeninfotech.com \
+  --email you@betazeninfotech.com \
+  --repo git@github.com:BetaZen-InfoTech/file-manager.git \
+  --admin-email admin@betazeninfotech.com \
+  --admin-pass 'StrongPassword!'
+```
+
+### Interactive mode (no flags)
+
+```bash
+sudo bash /var/www/app/scripts/setup.sh
+```
+…prompts for domain, email, repo, admin credentials.
+
+### All flags
 
 | Flag | Purpose | Default |
 |------|---------|---------|
-| `--domain <fqdn>` | needed for SSL + Nginx vhost | – |
-| `--email <addr>` | for Let's Encrypt | – |
-| `--repo <url>` | source repo | this one |
-| `--branch <name>` | branch to deploy | `main` |
+| `--domain <fqdn>` | for SSL + Nginx vhost (required) | – |
+| `--email <addr>` | for Let's Encrypt (required unless `--skip-ssl`) | – |
+| `--repo <url>` | repo URL (SSH for private, HTTPS for public) | this repo |
+| `--branch <name>` | deploy branch | `main` |
 | `--dir <path>` | install location | `/var/www/app` |
-| `--admin-email`, `--admin-pass` | seed first super_admin | (skip — do it later) |
-| `--skip-ssl` | use if DNS not ready; re-run certbot later | off |
+| `--admin-email`, `--admin-pass` | seed first super_admin (≥ 8 chars) | (skip; seed later) |
+| `--skip-ssl` | use if DNS isn't ready yet; re-run certbot later | off |
+| `--skip-dns-check` | don't verify A record matches the VPS public IP | off |
+| `--reset` | wipe DB + MinIO volumes (DANGER — fresh install) | off |
+| `--interactive` / `-i` | force interactive prompts | off |
+| `--verbose` / `-v` | shell trace + verbose | off |
+
+When `setup.sh` finishes, it writes `/root/file-manager-install-report.txt` (`chmod 600`) with the URL, webhook secret to paste into GitHub, and S3 keys.
 
 ---
 
-## Manual install (each step explicit, equivalent to bootstrap)
+## Private repo setup (one-time, ~2 min)
 
 ```bash
-# 1) Clone
-git clone https://github.com/BetaZen-InfoTech/file-manager.git /var/www/app && cd /var/www/app
-# 2) Configure
-cp .env.example .env       # fill in JWT_SECRET, MONGODB_URI, S3_*, etc.
-# 3) Installer (one command — same heavy lifting as bootstrap minus DNS-aware SSL)
-bash scripts/install.sh https://github.com/BetaZen-InfoTech/file-manager.git
-# 4) Cron jobs
-bash scripts/setup-cron.sh
-# 5) Nginx + SSL
-sudo cp nginx/filemanager.conf /etc/nginx/sites-available/filemanager
-sudo ln -s /etc/nginx/sites-available/filemanager /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-sudo certbot --nginx -d files.yourdomain.com
+# On the VPS:
+sudo ssh-keygen -t ed25519 -f /root/.ssh/deploy_key -N '' -C "vps-$(hostname)"
+sudo cat /root/.ssh/deploy_key.pub
+# Copy that line → github.com/BetaZen-InfoTech/file-manager/settings/keys → Add deploy key (read-only)
+
+sudo tee -a /root/.ssh/config >/dev/null <<'EOF'
+Host github.com
+  HostName github.com
+  User git
+  IdentityFile /root/.ssh/deploy_key
+  IdentitiesOnly yes
+EOF
+sudo chmod 600 /root/.ssh/config
+sudo ssh-keyscan -t ed25519 github.com | sudo tee -a /root/.ssh/known_hosts >/dev/null
+sudo ssh -T git@github.com   # should say "Hi BetaZen-InfoTech/file-manager! …"
 ```
 
-Either way: `scripts/install.sh` and `scripts/bootstrap.sh` are idempotent — re-run anytime to apply updates.
+Then run setup.sh with `--repo git@github.com:BetaZen-InfoTech/file-manager.git` as shown above.
 
 ---
 

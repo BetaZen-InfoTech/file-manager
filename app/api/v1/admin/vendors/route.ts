@@ -53,6 +53,7 @@ export async function POST(req: NextRequest) {
     slug: parsed.data.slug,
     plan: parsed.data.plan || 'free',
     status: 'active',
+    contactEmail: parsed.data.ownerEmail?.toLowerCase() || null,
     limits: {
       maxStorageBytes: parsed.data.limits?.maxStorageBytes ?? 10 * 1024 * 1024 * 1024,
       maxBuckets: parsed.data.limits?.maxBuckets ?? 10,

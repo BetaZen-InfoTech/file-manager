@@ -27,6 +27,14 @@ export async function handleLinkDownload(
     return jsonError('NOT_FOUND', 'link not found', 404);
   }
 
+  // Suspension comes first — a suspended vendor's links must be inert
+  // even if the link itself is still valid (§9 of the spec).
+  const vendor = await Vendor.findById(link.vendorId).lean();
+  if (!vendor) return jsonError('NOT_FOUND', 'vendor not found', 404);
+  if (vendor.status === 'suspended') {
+    return jsonError('VENDOR_SUSPENDED', 'This vendor is suspended.', 403);
+  }
+
   const verdict = isLinkUsable(
     {
       type: link.type,
@@ -48,12 +56,6 @@ export async function handleLinkDownload(
   if (verdict === 'LIMIT_REACHED')
     return jsonError('LIMIT_REACHED', 'download limit reached', 410);
   if (verdict !== 'OK') return jsonError('UNAVAILABLE', 'unavailable', 410);
-
-  const vendor = await Vendor.findById(link.vendorId).lean();
-  if (!vendor) return jsonError('NOT_FOUND', 'vendor not found', 404);
-  if (vendor.status === 'suspended') {
-    return jsonError('VENDOR_SUSPENDED', 'This vendor is suspended.', 403);
-  }
 
   if (link.passwordHash) {
     const pwd = req.headers.get('x-link-password') || new URL(req.url).searchParams.get('p') || '';

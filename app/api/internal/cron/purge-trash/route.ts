@@ -20,9 +20,24 @@ export async function GET(req: NextRequest) {
   }).lean();
   let purged = 0;
   for (const f of expired) {
-    try {
-      await storage.deleteObject(f.storageKey);
-    } catch {}
+    // Deduplication aware: only delete the storage object if no OTHER live row references it.
+    const otherRefs = await FileModel.countDocuments({
+      storageKey: f.storageKey,
+      _id: { $ne: f._id },
+      status: { $ne: 'trashed' }
+    });
+    if (otherRefs === 0) {
+      try {
+        await storage.deleteObject(f.storageKey);
+        if (Array.isArray(f.thumbnails)) {
+          for (const t of f.thumbnails) {
+            try {
+              await storage.deleteObject(t.storageKey);
+            } catch {}
+          }
+        }
+      } catch {}
+    }
     await FileModel.deleteOne({ _id: f._id });
     await decrementUsage(String(f.vendorId), f.sizeBytes, 1);
     await Bucket.updateOne(

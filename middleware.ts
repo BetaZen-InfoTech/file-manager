@@ -9,10 +9,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 export function middleware(req: NextRequest) {
   const res = NextResponse.next();
+  // Security headers are set by next.config.js — middleware only adds the trace id
   res.headers.set('X-Request-Id', crypto.randomUUID());
-  res.headers.set('X-Content-Type-Options', 'nosniff');
-  res.headers.set('X-Frame-Options', 'DENY');
-  res.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
   return res;
 }
 
