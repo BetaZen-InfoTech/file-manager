@@ -1,0 +1,50 @@
+{
+  "name": "file-manager-saas",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Multi-tenant file manager SaaS — Next.js + MongoDB + MinIO",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start -p ${PORT:-3000}",
+    "lint": "next lint",
+    "test": "node --test tests/core-logic.test.js",
+    "test:int": "vitest run tests/integration",
+    "test:e2e": "playwright test",
+    "seed:admin": "node scripts/seed-admin.js",
+    "cron:expire-links": "node scripts/cron-expire-links.js",
+    "cron:purge-trash": "node scripts/cron-purge-trash.js",
+    "cron:recount-usage": "node scripts/cron-recount-usage.js"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.658.0",
+    "@aws-sdk/s3-request-presigner": "^3.658.0",
+    "argon2": "^0.41.1",
+    "ioredis": "^5.4.1",
+    "jose": "^5.9.4",
+    "mime-types": "^2.1.35",
+    "mongoose": "^8.7.0",
+    "next": "14.2.13",
+    "nodemailer": "^6.9.15",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "sharp": "^0.33.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/mime-types": "^2.1.4",
+    "@types/node": "^20.16.10",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^18.3.10",
+    "@types/react-dom": "^18.3.0",
+    "autoprefixer": "^10.4.20",
+    "eslint": "^8.57.1",
+    "eslint-config-next": "14.2.13",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.2"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

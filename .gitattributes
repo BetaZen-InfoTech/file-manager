@@ -1,0 +1,18 @@
+# Normalize line endings.
+# Source files use LF (so they work identically on Linux and Windows).
+* text=auto eol=lf
+
+# Shell scripts MUST be LF or `bash` on Linux will choke with bad interpreter.
+*.sh text eol=lf
+
+# Binary files — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.zip binary
+*.tar binary
+*.gz binary

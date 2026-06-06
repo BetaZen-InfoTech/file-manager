@@ -1,0 +1,294 @@
+{
+  "info": {
+    "name": "File Manager SaaS",
+    "description": "Multi-tenant file manager — full API.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://files.yourdomain.com" },
+    { "key": "apiKey", "value": "fmsk_REPLACE_ME" },
+    { "key": "bucketId", "value": "" },
+    { "key": "fileId", "value": "" },
+    { "key": "linkId", "value": "" },
+    { "key": "vendorId", "value": "" },
+    { "key": "jwt", "value": "" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{apiKey}}", "type": "string" }]
+  },
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Login (UI)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/auth/login",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"you@example.com\",\n  \"password\": \"...\"\n}"
+            }
+          }
+        },
+        { "name": "Me", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/auth/me" } },
+        { "name": "Logout", "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/auth/logout" } }
+      ]
+    },
+    {
+      "name": "Buckets",
+      "item": [
+        { "name": "List buckets", "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/buckets" } },
+        {
+          "name": "Create bucket",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/buckets",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"my-bucket\",\n  \"description\": \"\",\n  \"isPublic\": false\n}"
+            }
+          }
+        },
+        {
+          "name": "Delete bucket",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/buckets/{{bucketId}}" }
+        }
+      ]
+    },
+    {
+      "name": "Folders",
+      "item": [
+        {
+          "name": "Create folder",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/buckets/{{bucketId}}/folders",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"name\": \"reports\" }" }
+          }
+        },
+        {
+          "name": "Hide folder",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/folders/{{folderId}}/hide" }
+        },
+        {
+          "name": "Unhide folder",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/folders/{{folderId}}/unhide" }
+        }
+      ]
+    },
+    {
+      "name": "Files",
+      "item": [
+        {
+          "name": "Upload (multipart) -> returns id + full details",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/buckets/{{bucketId}}/files",
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "file", "type": "file" },
+                { "key": "tags", "value": "demo,test", "type": "text" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "List files",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/buckets/{{bucketId}}/files?showHidden=false" }
+        },
+        {
+          "name": "File details",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/files/{{fileId}}" }
+        },
+        {
+          "name": "Download",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/files/{{fileId}}/download" }
+        },
+        {
+          "name": "Hide file",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/files/{{fileId}}/hide" }
+        },
+        {
+          "name": "Unhide file",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/files/{{fileId}}/unhide" }
+        },
+        {
+          "name": "Soft delete",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/files/{{fileId}}" }
+        },
+        {
+          "name": "Restore from trash",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/files/{{fileId}}/restore" }
+        }
+      ]
+    },
+    {
+      "name": "Links",
+      "item": [
+        {
+          "name": "Create public link",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/links",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"type\": \"public\", \"neverExpire\": true }"
+            }
+          }
+        },
+        {
+          "name": "Create temporary link (10 min)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/links",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"type\": \"temporary\", \"expiresIn\": 600 }"
+            }
+          }
+        },
+        {
+          "name": "Create private (JWT) link",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/links",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"type\": \"private\", \"expiresIn\": 3600, \"requiredScope\": \"file:download\" }"
+            }
+          }
+        },
+        {
+          "name": "List active links",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/files/{{fileId}}/links" }
+        },
+        {
+          "name": "Reset ALL links",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/files/{{fileId}}/links/reset",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{}" }
+          }
+        },
+        {
+          "name": "Revoke single link",
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/api/v1/links/{{linkId}}" }
+        }
+      ]
+    },
+    {
+      "name": "API keys",
+      "item": [
+        {
+          "name": "List",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/api-keys" }
+        },
+        {
+          "name": "Create (plain key shown once)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/api-keys",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"name\": \"My key\", \"permissions\": [\"file:upload\",\"file:download\"] }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3rd-party JWT",
+      "item": [
+        {
+          "name": "Issue",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/jwt/issue",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"subject\": \"partner\", \"scopes\": [\"file:download\"], \"expiresIn\": 3600 }"
+            }
+          }
+        },
+        {
+          "name": "Revoke (by jti)",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/jwt/revoke",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"jti\": \"\" }" }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "List vendors",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/vendors" }
+        },
+        {
+          "name": "Suspend vendor",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/admin/vendors/{{vendorId}}/suspend",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"reason\": \"non-payment\" }" }
+          }
+        },
+        {
+          "name": "Activate vendor",
+          "request": { "method": "POST", "url": "{{baseUrl}}/api/v1/admin/vendors/{{vendorId}}/activate" }
+        },
+        {
+          "name": "Maintenance ON",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/admin/maintenance",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{ \"enabled\": true, \"message\": \"Be right back\" }"
+            }
+          }
+        },
+        {
+          "name": "Maintenance OFF",
+          "request": {
+            "method": "POST",
+            "url": "{{baseUrl}}/api/v1/admin/maintenance",
+            "header": [{ "key": "content-type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{ \"enabled\": false }" }
+          }
+        },
+        {
+          "name": "Usage stats",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/usage" }
+        },
+        {
+          "name": "Audit logs",
+          "request": { "method": "GET", "url": "{{baseUrl}}/api/v1/admin/audit-logs" }
+        }
+      ]
+    },
+    {
+      "name": "Health",
+      "item": [
+        { "name": "Health check", "request": { "method": "GET", "url": "{{baseUrl}}/api/health" } }
+      ]
+    }
+  ]
+}

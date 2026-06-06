@@ -1,0 +1,41 @@
+node_modules/
+.next/
+out/
+dist/
+build/
+
+# env
+.env
+.env.local
+.env.production
+.env.development
+
+# logs
+*.log
+npm-debug.log*
+deploy.log
+pm2.log
+
+# os
+.DS_Store
+Thumbs.db
+
+# editor
+.vscode/
+.idea/
+*.swp
+
+# coverage / cache
+coverage/
+.cache/
+.eslintcache
+.turbo/
+
+# next
+next-env.d.ts
+
+# uploaded local files (when disk driver in use)
+storage_local/
+
+# memory directory should never be tracked
+memory/
