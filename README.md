@@ -35,41 +35,60 @@ middleware.ts         security headers + request id
 
 ---
 
-## Quick start (blank Ubuntu 22.04/24.04)
+## 🚀 One-click install on a blank Ubuntu VPS
+
+Point your DNS A record at the VPS first (`files.yourdomain.com → 1.2.3.4`), then **paste this one command**:
 
 ```bash
-# 1) Clone (public)
-git clone https://github.com/yourorg/file-manager.git app
-cd app
-
-# 2) Configure
-cp .env.example .env
-# edit .env — fill in JWT_SECRET, MONGODB_URI, S3_* (or accept the localhost defaults)
-
-# 3) Install + run (one command does it all)
-bash scripts/install.sh https://github.com/yourorg/file-manager.git
+curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/bootstrap.sh \
+  | sudo bash -s -- \
+      --domain files.yourdomain.com \
+      --email you@yourdomain.com \
+      --admin-email admin@yourdomain.com \
+      --admin-pass 'StrongPassword123'
 ```
 
-The installer handles: Node 20 + nginx + UFW + Docker + MinIO/Mongo via compose +
-PM2 + Certbot + the first super_admin seed.
+The bootstrap does everything: apt update → Node 20 + Docker + Nginx + Certbot + PM2 →
+clone repo → **auto-generate `.env` with random secrets** (chmod 600) → start Mongo + MinIO via compose →
+`npm ci && npm test && npm run build` → seed super_admin → Nginx vhost + Let's Encrypt SSL →
+install cron jobs → PM2 boot-time autostart. Takes ~5–10 minutes. **Idempotent — safe to re-run.**
 
-Manual route, equivalent:
+When it finishes, hit `https://files.yourdomain.com/login`. The end-of-run summary prints
+the auto-generated GitHub webhook secret to paste into your repo's Settings → Webhooks.
+
+**bootstrap.sh flags:**
+
+| Flag | Purpose | Default |
+|------|---------|---------|
+| `--domain <fqdn>` | needed for SSL + Nginx vhost | – |
+| `--email <addr>` | for Let's Encrypt | – |
+| `--repo <url>` | source repo | this one |
+| `--branch <name>` | branch to deploy | `main` |
+| `--dir <path>` | install location | `/var/www/app` |
+| `--admin-email`, `--admin-pass` | seed first super_admin | (skip — do it later) |
+| `--skip-ssl` | use if DNS not ready; re-run certbot later | off |
+
+---
+
+## Manual install (each step explicit, equivalent to bootstrap)
 
 ```bash
-# infra
-sudo docker compose up -d
-# app
-npm ci && npm run build
-node scripts/seed-admin.js --email you@x.com --password 'changeme123'
-pm2 start ecosystem.config.js && pm2 save && pm2 startup
-# nginx + ssl
+# 1) Clone
+git clone https://github.com/BetaZen-InfoTech/file-manager.git /var/www/app && cd /var/www/app
+# 2) Configure
+cp .env.example .env       # fill in JWT_SECRET, MONGODB_URI, S3_*, etc.
+# 3) Installer (one command — same heavy lifting as bootstrap minus DNS-aware SSL)
+bash scripts/install.sh https://github.com/BetaZen-InfoTech/file-manager.git
+# 4) Cron jobs
+bash scripts/setup-cron.sh
+# 5) Nginx + SSL
 sudo cp nginx/filemanager.conf /etc/nginx/sites-available/filemanager
 sudo ln -s /etc/nginx/sites-available/filemanager /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 sudo certbot --nginx -d files.yourdomain.com
 ```
 
-`scripts/install.sh` is idempotent — re-running it pulls latest and re-builds.
+Either way: `scripts/install.sh` and `scripts/bootstrap.sh` are idempotent — re-run anytime to apply updates.
 
 ---
 
