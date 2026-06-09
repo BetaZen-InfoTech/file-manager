@@ -48,7 +48,7 @@ SKIP_SSL=0
 SKIP_DNS_CHECK=0
 ADMIN_EMAIL=""
 ADMIN_PASS=""
-RESET=0
+DO_RESET=0   # NOT "RESET" — that name is the ANSI reset color below and would collide
 INTERACTIVE=0
 VERBOSE=0
 
@@ -94,7 +94,7 @@ while [[ $# -gt 0 ]]; do
     --skip-dns-check)    SKIP_DNS_CHECK=1; shift;;
     --admin-email)       ADMIN_EMAIL="$2"; shift 2;;
     --admin-pass)        ADMIN_PASS="$2"; shift 2;;
-    --reset)             RESET=1; shift;;
+    --reset)             DO_RESET=1; shift;;
     --interactive|-i)    INTERACTIVE=1; shift;;
     --verbose|-v)        VERBOSE=1; shift;;
     --help|-h)           print_help; exit 0;;
@@ -289,8 +289,8 @@ cd "$APP_DIR"
 ENV_FILE="$APP_DIR/.env"
 gen_secret() { openssl rand -hex 32; }
 
-if [[ ! -f "$ENV_FILE" || "${RESET:-0}" == "1" ]]; then
-  [[ "${RESET:-0}" == "1" && -f "$ENV_FILE" ]] && { warn "--reset: backing up old .env to .env.bak.$(date +%s)"; mv "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"; }
+if [[ ! -f "$ENV_FILE" || "${DO_RESET:-0}" == "1" ]]; then
+  [[ "${DO_RESET:-0}" == "1" && -f "$ENV_FILE" ]] && { warn "--reset: backing up old .env to .env.bak.$(date +%s)"; mv "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"; }
 
   step "Generating $ENV_FILE with random secrets"
   JWT_SECRET="$(gen_secret)"
@@ -375,7 +375,7 @@ unset _line _key _val
 # 8. Infra (Mongo + MinIO) via docker compose
 # ============================================================================
 step "Starting Mongo + MinIO via docker compose"
-if [[ "$RESET" -eq 1 ]]; then
+if [[ "${DO_RESET:-0}" == "1" ]]; then
   warn "--reset: tearing down volumes too"
   docker compose -f "$APP_DIR/docker-compose.yml" down -v >/dev/null 2>&1 || true
 fi
@@ -424,7 +424,15 @@ npm test
 ok "Tests passed"
 
 step "Building Next.js production bundle"
-npm run build
+rm -rf .next
+if ! npm run build; then
+  # A partial/corrupt node_modules from an interrupted earlier run makes
+  # webpack fail to resolve the "@/..." path aliases. Clean-reinstall + retry.
+  warn "Build failed — clearing node_modules + .next and retrying with a clean install…"
+  rm -rf node_modules .next
+  npm install --no-audit --no-fund
+  npm run build
+fi
 ok "Build complete"
 
 # ============================================================================
