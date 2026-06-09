@@ -25,12 +25,25 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-# ---------- defaults ------------------------------------------------------- #
+# ============================================================================
+# BUILT-IN DEFAULTS — edit this block to rebrand/preconfigure the installer.
+# Everything below can still be overridden by a CLI flag or an interactive
+# prompt; these are just the values used when nothing else is supplied.
+# ============================================================================
+DEFAULT_DOMAIN="cdn.betazeninfotech.com"   # used for Nginx vhost + SSL cert
+DEFAULT_ADMIN_EMAIL=""                      # blank → admin@<domain>
+DEFAULT_ADMIN_PASS=""                       # blank → auto-generated 16-char random (shown in report)
+DEFAULT_SSL_EMAIL=""                        # blank → falls back to the admin email
+DEFAULT_REPO="https://github.com/BetaZen-InfoTech/file-manager.git"
+DEFAULT_BRANCH="main"
+DEFAULT_APP_DIR="/var/www/app"
+
+# ---------- runtime values (populated from flags / prompts / defaults) ----- #
 DOMAIN=""
 EMAIL=""
-REPO="https://github.com/BetaZen-InfoTech/file-manager.git"
-BRANCH="main"
-APP_DIR="/var/www/app"
+REPO="$DEFAULT_REPO"
+BRANCH="$DEFAULT_BRANCH"
+APP_DIR="$DEFAULT_APP_DIR"
 SKIP_SSL=0
 SKIP_DNS_CHECK=0
 ADMIN_EMAIL=""
@@ -132,25 +145,25 @@ fi
 
 if [[ "$INTERACTIVE" -eq 1 ]]; then
   step "Interactive setup — answer a few questions"
-  prompt DOMAIN       "Domain" "cdn.betazeninfotech.com"
-  prompt EMAIL        "Email for Let's Encrypt SSL (blank = admin@$DOMAIN)" "admin@${DOMAIN:-localhost}"
+  prompt DOMAIN       "Domain" "$DEFAULT_DOMAIN"
+  prompt EMAIL        "Email for Let's Encrypt SSL (blank = admin@$DOMAIN)" "${DEFAULT_SSL_EMAIL:-${DEFAULT_ADMIN_EMAIL:-admin@${DOMAIN:-$DEFAULT_DOMAIN}}}"
   prompt REPO         "Git repo URL (SSH for private, HTTPS for public)" "$REPO"
   prompt BRANCH       "Branch to deploy" "$BRANCH"
   prompt APP_DIR      "Install dir" "$APP_DIR"
-  prompt ADMIN_EMAIL  "First super_admin email" "admin@${DOMAIN:-localhost}"
+  prompt ADMIN_EMAIL  "First super_admin email" "${DEFAULT_ADMIN_EMAIL:-admin@${DOMAIN:-$DEFAULT_DOMAIN}}"
   prompt ADMIN_PASS   "First super_admin password (blank = auto-generate)" "" 1
   echo
 fi
 
-# Default domain when none was supplied (flag or prompt left blank).
-DOMAIN="${DOMAIN:-cdn.betazeninfotech.com}"
-
-# Sensible defaults so a super_admin is always seeded and SSL always has an email.
-#   - admin email defaults to admin@<domain>
-#   - SSL email, if not given, falls back to that same admin@<domain>
-#   - admin password, if not given, is auto-generated later (step 10)
-ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$DOMAIN}"
-EMAIL="${EMAIL:-$ADMIN_EMAIL}"
+# Apply built-in defaults when nothing was supplied (flag or prompt left blank).
+#   - domain      → DEFAULT_DOMAIN
+#   - admin email → DEFAULT_ADMIN_EMAIL, else admin@<domain>
+#   - SSL email   → DEFAULT_SSL_EMAIL, else the admin email
+#   - admin pass  → DEFAULT_ADMIN_PASS, else auto-generated later (step 10)
+DOMAIN="${DOMAIN:-$DEFAULT_DOMAIN}"
+ADMIN_EMAIL="${ADMIN_EMAIL:-${DEFAULT_ADMIN_EMAIL:-admin@$DOMAIN}}"
+EMAIL="${EMAIL:-${DEFAULT_SSL_EMAIL:-$ADMIN_EMAIL}}"
+ADMIN_PASS="${ADMIN_PASS:-$DEFAULT_ADMIN_PASS}"
 
 if [[ -n "$ADMIN_PASS" && ${#ADMIN_PASS} -lt 8 ]]; then
   err "admin password must be at least 8 characters."
