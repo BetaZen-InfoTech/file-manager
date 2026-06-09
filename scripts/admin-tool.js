@@ -53,6 +53,18 @@ async function main() {
     return;
   }
 
+  // Test an ARBITRARY uri (used by `bcdnp` before applying a new MONGODB_URI).
+  // Prints a single JSON line so the caller can parse it. Exits non-zero on
+  // connection failure.
+  if (sub === 'ping-uri') {
+    const uri = args.uri;
+    if (!uri) { console.error('Usage: ping-uri --uri <mongodb-uri>'); process.exit(2); }
+    await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
+    const n = await mongoose.connection.collection('users').countDocuments({ role: 'super_admin' });
+    console.log(JSON.stringify({ ok: true, hasSuperAdmin: n > 0, superAdmins: n }));
+    return;
+  }
+
   if (sub === 'list') {
     const Users = await connect();
     const admins = await Users.find({ role: 'super_admin' })

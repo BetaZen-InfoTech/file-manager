@@ -289,8 +289,8 @@ cd "$APP_DIR"
 ENV_FILE="$APP_DIR/.env"
 gen_secret() { openssl rand -hex 32; }
 
-if [[ ! -f "$ENV_FILE" || "$RESET" -eq 1 ]]; then
-  [[ "$RESET" -eq 1 && -f "$ENV_FILE" ]] && { warn "--reset: backing up old .env to .env.bak.$(date +%s)"; mv "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"; }
+if [[ ! -f "$ENV_FILE" || "${RESET:-0}" == "1" ]]; then
+  [[ "${RESET:-0}" == "1" && -f "$ENV_FILE" ]] && { warn "--reset: backing up old .env to .env.bak.$(date +%s)"; mv "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)"; }
 
   step "Generating $ENV_FILE with random secrets"
   JWT_SECRET="$(gen_secret)"
@@ -342,7 +342,7 @@ MAIL_HOST=
 MAIL_PORT=587
 MAIL_USER=
 MAIL_PASS=
-MAIL_FROM=File Manager <no-reply@$DOMAIN>
+MAIL_FROM="File Manager <no-reply@$DOMAIN>"
 
 INTERNAL_CRON_SECRET=$INTERNAL_CRON_SECRET
 RATE_LIMIT_PER_MIN=100
@@ -353,11 +353,23 @@ else
   ok ".env exists — leaving it alone"
 fi
 
-# Export so subsequent steps have the values
+# Export so subsequent steps have the values. We parse line-by-line instead of
+# `source`-ing: a .env value may contain characters bash would treat as syntax
+# (e.g. MAIL_FROM's "<...>"), which would crash a naive `source`.
 set -a
-# shellcheck disable=SC1090
-source "$ENV_FILE"
+while IFS= read -r _line || [[ -n "$_line" ]]; do
+  [[ -z "$_line" || "$_line" == \#* ]] && continue
+  [[ "$_line" != *=* ]] && continue
+  _key="${_line%%=*}"
+  _val="${_line#*=}"
+  # strip one layer of surrounding single/double quotes, if present
+  _val="${_val%\"}"; _val="${_val#\"}"
+  _val="${_val%\'}"; _val="${_val#\'}"
+  printf -v "$_key" '%s' "$_val"
+  export "${_key?}"
+done < "$ENV_FILE"
 set +a
+unset _line _key _val
 
 # ============================================================================
 # 8. Infra (Mongo + MinIO) via docker compose
@@ -592,7 +604,7 @@ REPORT_FILE="/root/file-manager-install-report.txt"
   echo
   echo "--- Super admin login ---"
   echo "Email:     $ADMIN_EMAIL"
-  if [[ "$ADMIN_PASS_GENERATED" -eq 1 ]]; then
+  if [[ "${ADMIN_PASS_GENERATED:-0}" == "1" ]]; then
     echo "Password:  $ADMIN_PASS   (auto-generated — change after first login)"
   else
     echo "Password:  (as provided at install time)"
@@ -623,21 +635,14 @@ echo
 hr
 printf "${GREEN}  File Manager SaaS is up at https://%s/login${RESET}\n" "$DOMAIN"
 hr
-printf "  Admin email:  ${GREEN}%s${RESET}\n" "$ADMIN_EMAIL"
-if [[ "$ADMIN_PASS_GENERATED" -eq 1 ]]; then
-  printf "  Admin pass:   ${GREEN}%s${RESET}  ${DIM}(auto-generated — change it)${RESET}\n" "$ADMIN_PASS"
-fi
+# Credentials & secrets are NOT printed to the screen — they live only in the
+# chmod-600 report so they don't leak into terminals, logs, or screenshots.
 echo  "  Install dir:  $APP_DIR"
-echo  "  Report saved: $REPORT_FILE  (chmod 600)"
+echo  "  Credentials:  $REPORT_FILE  ${DIM}(chmod 600 — contains admin login + secrets)${RESET}"
+echo  "                view with:  sudo cat $REPORT_FILE"
 echo
 echo  "  Next steps:"
-echo  "    1. Open https://$DOMAIN/login and sign in."
-echo  "    2. Add a GitHub webhook:"
-echo  "         URL:    https://$DOMAIN/api/v1/deploy/github"
-echo  "         Secret: (see $REPORT_FILE)"
-echo  "       Then 'git push origin main' will auto-deploy."
-echo  "    3. (Optional) Configure mail in $ENV_FILE (MAIL_DRIVER=smtp + creds)"
-echo  "       then: pm2 reload filemanager --update-env"
-echo
-echo  "  Update later:  cd $APP_DIR && bash scripts/update.sh"
+echo  "    1. cat the report above for the admin login, then sign in at https://$DOMAIN/login"
+echo  "    2. Manage the server anytime:  sudo bcdnp"
+echo  "    3. Upgrade later:              sudo fms-upgrade"
 echo

@@ -137,14 +137,56 @@ act_admin_password() {   # 6
   ( cd "$APP_DIR" && node scripts/admin-tool.js set-password --email "$email" --password "$pw" )
 }
 
-act_mongo_reload() {     # 7
-  info "MONGODB_URI = $(env_get MONGODB_URI)"
-  info "Testing connection…"
-  if ( cd "$APP_DIR" && node scripts/admin-tool.js ping ); then
-    pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded with .env Mongo settings"
-  else
-    err "Mongo connection failed — fix MONGODB_URI in .env, then retry."
+# Mask the password in a mongodb URI for display.
+mask_uri() { printf '%s' "$1" | sed -E 's#(mongodb(\+srv)?://[^:/@]+:)[^@]*@#\1***@#'; }
+
+act_mongo_update() {     # 7
+  local cur new test_out
+  cur="$(env_get MONGODB_URI)"
+  hr
+  info "Current: $(mask_uri "$cur")"
+  hr
+  echo "  1) Update the MongoDB URI (test, then apply + reload)"
+  echo "  2) Just test + reload the current URI"
+  local choice; choice="$(ask "Choose" "1")"
+
+  if [[ "$choice" == "2" ]]; then
+    info "Testing current connection…"
+    if ( cd "$APP_DIR" && node scripts/admin-tool.js ping ); then
+      pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded with current .env Mongo settings"
+    else
+      err "Mongo connection failed — fix MONGODB_URI (option 1), then retry."
+    fi
+    return
   fi
+
+  new="$(ask "New MONGODB_URI" "$cur")"
+  [[ -z "$new" ]] && { warn "Cancelled."; return; }
+  if [[ "$new" != mongodb://* && "$new" != mongodb+srv://* ]]; then
+    err "URI must start with mongodb:// or mongodb+srv://"; return
+  fi
+  [[ "$new" == "$cur" ]] && { warn "Unchanged."; return; }
+
+  info "Testing new connection (8s timeout)…"
+  if ! test_out="$( cd "$APP_DIR" && node scripts/admin-tool.js ping-uri --uri "$new" 2>/dev/null )"; then
+    err "Could not connect with the new URI — NOT applied."
+    info "Run with details: cd $APP_DIR && node scripts/admin-tool.js ping-uri --uri '<uri>'"
+    return
+  fi
+  ok "Connection OK"
+  if printf '%s' "$test_out" | grep -q '"hasSuperAdmin":false'; then
+    warn "The target database has NO super_admin user — you could be locked out of the panel."
+    confirm "Apply anyway?" || { warn "Cancelled."; return; }
+  fi
+
+  # Back up .env, then write the new URI.
+  cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)" 2>/dev/null || true
+  env_set MONGODB_URI "$new"
+  ok "Updated MONGODB_URI in .env (backup saved)"
+
+  info "Reloading panel to apply…"
+  pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded" || warn "Reload failed — run option 8"
+  sleep 2; act_health
 }
 
 act_restart_panel() {    # 8
@@ -239,7 +281,7 @@ run_action() {
     4|https|force-https) act_force_https;;
     5|email)             act_admin_email;;
     6|password|passwd)   act_admin_password;;
-    7|mongo|db)          act_mongo_reload;;
+    7|mongo|db|mongodb)   act_mongo_update;;
     8|restart|reload)    act_restart_panel;;
     9|nginx)             act_restart_nginx;;
     10|heal|resolve|fix) act_resolve;;
@@ -271,7 +313,7 @@ menu() {
    4) Force HTTPS (redirect)            13) View panel logs
    5) Update super admin email          14) Toggle maintenance mode
    6) Update super admin password       15) Backup now
-   7) Reload MongoDB from .env          16) Show install report / secrets
+   7) Update MongoDB URI (test+apply)   16) Show install report / secrets
    8) Restart panel (pm2 reload)        17) Edit .env
    9) Restart nginx                     18) Status (pm2 + docker + nginx)
                                          0) Quit
