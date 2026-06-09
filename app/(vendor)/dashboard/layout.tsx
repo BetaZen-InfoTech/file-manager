@@ -10,6 +10,7 @@ const nav = [
   { href: '/dashboard/buckets', label: 'Buckets' },
   { href: '/dashboard/api-keys', label: 'API keys' },
   { href: '/dashboard/jwt', label: 'JWT' },
+  { href: '/dashboard/billing', label: 'Billing' },
   { href: '/dashboard/trash', label: 'Trash' }
 ];
 
@@ -59,7 +60,7 @@ export default async function VendorLayout({ children }: { children: ReactNode }
           </div>
         )}
         {children}
-        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 gap-1 border-t border-border bg-panel px-2 py-2 safe-pad-bottom md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-6 gap-1 border-t border-border bg-panel px-2 py-2 safe-pad-bottom md:hidden">
           {nav.map((n) => (
             <Link
               key={n.href}

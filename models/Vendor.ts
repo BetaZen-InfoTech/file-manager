@@ -26,6 +26,17 @@ const VendorSchema = new Schema(
       storageBytes: { type: Number, default: 0 },
       fileCount: { type: Number, default: 0 }
     },
+    subscription: {
+      planCode: { type: String, default: 'free' },
+      status: {
+        type: String,
+        enum: ['none', 'active', 'expired', 'pending'],
+        default: 'none'
+      },
+      gateway: { type: String, default: null },
+      currentPeriodEnd: { type: Date, default: null },
+      lastPaymentId: { type: Schema.Types.ObjectId, ref: 'Payment', default: null }
+    },
     contactEmail: { type: String, default: null }
   },
   { timestamps: true }

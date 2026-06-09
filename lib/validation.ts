@@ -128,6 +128,57 @@ export const serverActionSchema = z.object({
   email: z.string().email().max(254).optional()
 });
 
+// ---- Payments ----
+export const paymentConfigSchema = z.object({
+  razorpay: z
+    .object({
+      enabled: z.boolean().optional(),
+      keyId: z.string().max(200).optional(),
+      keySecret: z.string().max(400).optional()
+    })
+    .optional(),
+  phonepe: z
+    .object({
+      enabled: z.boolean().optional(),
+      merchantId: z.string().max(200).optional(),
+      saltKey: z.string().max(400).optional(),
+      saltIndex: z.string().max(10).optional(),
+      env: z.enum(['sandbox', 'prod']).optional()
+    })
+    .optional()
+});
+
+export const planUpsertSchema = z.object({
+  code: z
+    .string()
+    .min(2)
+    .max(40)
+    .regex(/^[a-z0-9-]+$/, 'lowercase letters, digits, hyphens'),
+  name: z.string().min(1).max(120),
+  description: z.string().max(400).optional(),
+  priceInr: z.number().int().min(0).max(10_000_000),
+  interval: z.enum(['month', 'year']),
+  limits: z.object({
+    maxStorageBytes: z.number().int().min(0),
+    maxBuckets: z.number().int().min(0),
+    maxApiKeys: z.number().int().min(0),
+    maxFileSizeBytes: z.number().int().min(0)
+  }),
+  active: z.boolean().optional(),
+  sortOrder: z.number().int().optional()
+});
+
+export const checkoutSchema = z.object({
+  planCode: z.string().min(2).max(40),
+  gateway: z.enum(['razorpay', 'phonepe'])
+});
+
+export const razorpayVerifySchema = z.object({
+  razorpayOrderId: z.string().min(1).max(120),
+  razorpayPaymentId: z.string().min(1).max(120),
+  razorpaySignature: z.string().min(1).max(256)
+});
+
 export const updateFileSchema = z.object({
   originalName: z.string().min(1).max(255).optional(),
   tags: z.array(z.string()).optional(),

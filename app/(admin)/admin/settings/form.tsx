@@ -31,7 +31,7 @@ export default function ServerForm({
     const j = await res.json().catch(() => null);
     setBusy(null);
     if (res.ok) {
-      setStatus(j?.data?.message || 'Done.');
+      setStatus(j?.message || 'Done.');
       router.refresh();
     } else {
       setStatus(j?.error?.message ? `Failed: ${j.error.message}` : 'Failed.');
