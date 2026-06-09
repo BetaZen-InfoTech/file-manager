@@ -118,6 +118,16 @@ export const seoSchema = z.object({
   robotsIndex: z.boolean().optional()
 });
 
+export const serverActionSchema = z.object({
+  action: z.enum(['issue-ssl', 'force-https', 'set-domain']),
+  domain: z
+    .string()
+    .min(3)
+    .max(253)
+    .regex(/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/, 'invalid domain'),
+  email: z.string().email().max(254).optional()
+});
+
 export const updateFileSchema = z.object({
   originalName: z.string().min(1).max(255).optional(),
   tags: z.array(z.string()).optional(),

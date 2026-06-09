@@ -469,6 +469,21 @@ else
   warn "scripts/bcdnp.sh not found — skipping bcdnp install"
 fi
 
+# Privileged SSL/domain helper used by the panel's "Domain & SSL" page.
+if [[ -f "$APP_DIR/scripts/fms-ssl-helper.sh" ]]; then
+  install -m 0755 -o root -g root "$APP_DIR/scripts/fms-ssl-helper.sh" /usr/local/sbin/fms-ssl-helper
+  # The app runs as root under PM2 here, so it can call the helper directly.
+  # For non-root deployments, grant exactly this one command via sudoers.
+  APP_USER="${APP_USER:-root}"
+  if [[ "$APP_USER" != "root" ]]; then
+    printf '%s ALL=(root) NOPASSWD: /usr/local/sbin/fms-ssl-helper\n' "$APP_USER" \
+      > /etc/sudoers.d/fms-ssl-helper
+    chmod 0440 /etc/sudoers.d/fms-ssl-helper
+    visudo -cf /etc/sudoers.d/fms-ssl-helper >/dev/null 2>&1 || rm -f /etc/sudoers.d/fms-ssl-helper
+  fi
+  ok "Installed /usr/local/sbin/fms-ssl-helper (panel Domain & SSL page)"
+fi
+
 # ============================================================================
 # 12. Nginx vhost
 # ============================================================================
