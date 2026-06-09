@@ -410,12 +410,15 @@ done
 # 9. npm deps + tests + build
 # ============================================================================
 step "Installing npm dependencies (this is the long step — ~2-4 min)"
-# Prefer the reproducible `npm ci`, but fall back to `npm install` when no
-# package-lock.json is present (it isn't committed in this repo).
+# CRITICAL: this script exports NODE_ENV=production from .env above, which makes
+# npm OMIT devDependencies — but the production BUILD needs them (typescript,
+# tailwindcss, postcss, …). Without `typescript`, Next can't read tsconfig
+# `paths`, so every "@/..." import fails ("Module not found: @/lib/db").
+# `--include=dev` forces dev deps to install regardless of NODE_ENV.
 if [[ -f package-lock.json ]]; then
-  npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+  npm ci --include=dev --no-audit --no-fund || npm install --include=dev --no-audit --no-fund
 else
-  npm install --no-audit --no-fund
+  npm install --include=dev --no-audit --no-fund
 fi
 ok "Dependencies installed"
 
@@ -430,7 +433,7 @@ if ! npm run build; then
   # webpack fail to resolve the "@/..." path aliases. Clean-reinstall + retry.
   warn "Build failed — clearing node_modules + .next and retrying with a clean install…"
   rm -rf node_modules .next
-  npm install --no-audit --no-fund
+  npm install --include=dev --no-audit --no-fund
   npm run build
 fi
 ok "Build complete"
