@@ -1,23 +1,38 @@
 #!/usr/bin/env bash
 # ============================================================
 # Update an existing install from GitHub.
-# Run on the VPS after the first install:
-#   cd /var/www/app && bash scripts/update.sh
+#
+# Three ways to run it (all equivalent):
+#   sudo fms-upgrade                                  # global command (installed by setup.sh)
+#   cd /var/www/app && bash scripts/update.sh         # from the repo
+#   curl -fsSL <raw>/scripts/update.sh | sudo bash    # one-line, from anywhere
 #
 # - Pulls latest main (or DEPLOY_BRANCH from env)
-# - Installs deps from lockfile
-# - Runs core-logic tests (fails fast if security logic regressed)
-# - Production build
-# - PM2 zero-downtime reload
+# - Installs deps  - Runs core-logic tests  - Production build  - PM2 reload
 # ============================================================
 set -euo pipefail
 
-APP_DIR="${APP_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+# Resolve the app directory: explicit APP_DIR > the script's own repo (when run
+# from a checkout) > the default install location. The repo-detection lets the
+# script also work when piped via `curl | bash` (where $0 isn't a real path).
+if [[ -z "${APP_DIR:-}" ]]; then
+  SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/.." 2>/dev/null && pwd || true)"
+  if [[ -n "$SELF_DIR" && -d "$SELF_DIR/.git" ]]; then
+    APP_DIR="$SELF_DIR"
+  else
+    APP_DIR="/var/www/app"
+  fi
+fi
 BRANCH="${DEPLOY_BRANCH:-main}"
 TS="$(date -u +%FT%TZ)"
 
 log() { printf "\n\033[1;36m[%s update] %s\033[0m\n" "$TS" "$*"; }
+err() { printf "\n\033[1;31m[%s update] %s\033[0m\n" "$TS" "$*" >&2; }
 
+if [[ ! -d "$APP_DIR/.git" ]]; then
+  err "No install found at $APP_DIR. Set APP_DIR=/path/to/app, or run the installer first."
+  exit 1
+fi
 cd "$APP_DIR"
 
 log "Fetching $BRANCH"

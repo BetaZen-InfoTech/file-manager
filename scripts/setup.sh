@@ -469,6 +469,17 @@ else
   warn "scripts/bcdnp.sh not found — skipping bcdnp install"
 fi
 
+# One-line upgrade command: `sudo fms-upgrade`
+if [[ -f "$APP_DIR/scripts/update.sh" ]]; then
+  cat > /usr/local/bin/fms-upgrade <<EOF
+#!/usr/bin/env bash
+export APP_DIR="$APP_DIR"
+exec bash "$APP_DIR/scripts/update.sh" "\$@"
+EOF
+  chmod +x /usr/local/bin/fms-upgrade
+  ok "Run 'sudo fms-upgrade' to pull + test + build + reload (zero downtime)"
+fi
+
 # Privileged SSL/domain helper used by the panel's "Domain & SSL" page.
 if [[ -f "$APP_DIR/scripts/fms-ssl-helper.sh" ]]; then
   install -m 0755 -o root -g root "$APP_DIR/scripts/fms-ssl-helper.sh" /usr/local/sbin/fms-ssl-helper
@@ -600,7 +611,7 @@ REPORT_FILE="/root/file-manager-install-report.txt"
   echo
   echo "--- Commands ---"
   echo "Admin console:      sudo bcdnp           (domain, SSL, admin pw, restart, heal…)"
-  echo "Update from main:   cd $APP_DIR && bash scripts/update.sh"
+  echo "Upgrade:            sudo fms-upgrade     (pull + test + build + zero-downtime reload)"
   echo "Logs:               pm2 logs filemanager"
   echo "Restart:            pm2 reload filemanager --update-env"
   echo "Health:             curl https://$DOMAIN/api/health"

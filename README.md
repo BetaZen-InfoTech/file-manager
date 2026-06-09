@@ -445,20 +445,28 @@ npm test    # core-logic.test.js — 27 verified tests (links, jwt, github sig, 
 
 ### 8.1 Fast path (production)
 
+After install, a global **`fms-upgrade`** command runs the whole pipeline from anywhere:
+
 ```bash
-ssh you@your-vps
-cd /var/www/app
-bash scripts/update.sh
+sudo fms-upgrade
 ```
 
-[`scripts/update.sh`](scripts/update.sh) runs the full safe pipeline and **only reloads if tests pass**:
+Equivalent forms (all run [`scripts/update.sh`](scripts/update.sh)):
+
+```bash
+cd /var/www/app && bash scripts/update.sh                      # from the repo checkout
+curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/update.sh | sudo bash   # one-line, from anywhere
+```
+
+The pipeline **only reloads if tests pass**:
 
 ```
-git fetch → reset --hard origin/main → npm ci → npm test → npm run build → pm2 reload (zero downtime)
+git fetch → reset --hard origin/main → npm install → npm test → npm run build → pm2 reload (zero downtime)
 ```
 
-Already up to date? It exits early. Force a rebuild with `FORCE=1 bash scripts/update.sh`. Or simply
-re-run the installer — it's idempotent and performs the same pull-and-rebuild.
+Already up to date? It exits early — force a rebuild with `FORCE=1 sudo fms-upgrade`. The piped form
+auto-resolves the app at `/var/www/app` (override with `APP_DIR=/path sudo fms-upgrade`). Or just
+re-run the installer — it's idempotent and does the same pull-and-rebuild.
 
 ### 8.2 Automatic on `git push` (GitHub webhook)
 
@@ -501,7 +509,7 @@ mid-copy. The script syncs the app, `.env`, and data volumes to the new host.
 | Action | Command |
 |--------|---------|
 | First install on blank Ubuntu | `bash scripts/setup.sh` |
-| **Upgrade** (pull + test + build + zero-downtime reload) | `bash scripts/update.sh` |
+| **Upgrade** (pull + test + build + zero-downtime reload) | `sudo fms-upgrade` |
 | Install/refresh cron jobs | `bash scripts/setup-cron.sh` |
 | Local health check | `bash scripts/healthcheck.sh` |
 | Migrate to a new VPS | `./scripts/migrate.sh user@new.vps.ip` |
