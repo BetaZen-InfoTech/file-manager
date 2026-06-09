@@ -446,6 +446,24 @@ systemctl enable pm2-root >/dev/null 2>&1 || true
 ok "PM2 process up, boot-time autostart enabled"
 
 # ============================================================================
+# 11b. bcdnp admin console (global `bcdnp` command)
+# ============================================================================
+step "Installing bcdnp admin console"
+if [[ -f "$APP_DIR/scripts/bcdnp.sh" ]]; then
+  chmod +x "$APP_DIR/scripts/bcdnp.sh"
+  # Wrapper so the command always knows where the app lives.
+  cat > /usr/local/bin/bcdnp <<EOF
+#!/usr/bin/env bash
+export APP_DIR="$APP_DIR"
+exec bash "$APP_DIR/scripts/bcdnp.sh" "\$@"
+EOF
+  chmod +x /usr/local/bin/bcdnp
+  ok "Run 'sudo bcdnp' for the admin menu (domain, SSL, admin password, restart, heal…)"
+else
+  warn "scripts/bcdnp.sh not found — skipping bcdnp install"
+fi
+
+# ============================================================================
 # 12. Nginx vhost
 # ============================================================================
 step "Configuring Nginx vhost for $DOMAIN"
@@ -560,6 +578,7 @@ REPORT_FILE="/root/file-manager-install-report.txt"
   echo "Events: push only"
   echo
   echo "--- Commands ---"
+  echo "Admin console:      sudo bcdnp           (domain, SSL, admin pw, restart, heal…)"
   echo "Update from main:   cd $APP_DIR && bash scripts/update.sh"
   echo "Logs:               pm2 logs filemanager"
   echo "Restart:            pm2 reload filemanager --update-env"

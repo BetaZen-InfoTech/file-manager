@@ -322,6 +322,58 @@ If anything fails, check `pm2 logs filemanager` and `/var/log/fms-setup.log` fir
 
 ---
 
+### 6.1 `bcdnp` — root admin console
+
+Every install ships a global **`bcdnp`** command (BetaZen CDN Panel) — an interactive, numbered
+menu for the common server-side tasks, so you don't have to remember individual commands. Run it as
+root:
+
+```bash
+sudo bcdnp                 # interactive menu
+sudo bcdnp restart         # jump straight to one action
+sudo bcdnp ssl             # … by name or number
+```
+
+```
+  BetaZen CDN Panel — admin console (bcdnp)
+  Panel:  https://cdn.betazeninfotech.com/login
+  Server: 203.0.113.10   ·   App: /var/www/app   ·   pm2: filemanager
+ ---------------------------------------------------------------
+   1) Open panel info (URL + IP)        10) Resolve server issues (auto-heal)
+   2) Domain setup (change domain)      11) Update from GitHub (pull+build)
+   3) Issue / renew SSL certificate     12) Health check
+   4) Force HTTPS (redirect)            13) View panel logs
+   5) Update super admin email          14) Toggle maintenance mode
+   6) Update super admin password       15) Backup now
+   7) Reload MongoDB from .env          16) Show install report / secrets
+   8) Restart panel (pm2 reload)        17) Edit .env
+   9) Restart nginx                     18) Status (pm2 + docker + nginx)
+                                         0) Quit
+```
+
+| # | Name | What it does |
+|---|------|--------------|
+| 1 | `open` | Print the panel URL + the public IP (open `http://<ip>/login` in a browser). |
+| 2 | `domain` | Change the domain — rewrites `.env` + the Nginx vhost, reloads, offers SSL. |
+| 3 | `ssl` | Issue / renew the Let's Encrypt certificate (certbot). |
+| 4 | `https` | Force the HTTP → HTTPS redirect. |
+| 5 | `email` | Update the super_admin email. |
+| 6 | `password` | Update the super_admin password (argon2id). |
+| 7 | `mongo` | Re-test the `MONGODB_URI` from `.env` and reload the panel. |
+| 8 | `restart` | Zero-downtime PM2 reload of the panel. |
+| 9 | `nginx` | `nginx -t` then reload. |
+| 10 | `heal` | Auto-heal: bring up Mongo/MinIO, restart panel + nginx, disk + health check. |
+| 11 | `update` | Run `scripts/update.sh` (pull + test + build + reload). |
+| 12 | `health` | Hit `/api/health`. |
+| 13 | `logs` | Tail the panel logs. |
+| 14 | `maintenance` | Toggle maintenance mode. |
+| 15 | `backup` | Run a backup now. |
+| 16 | `report` | Show `/root/file-manager-install-report.txt` (URL, secrets, keys). |
+| 17 | `env` | Edit `.env`, then optionally reload. |
+| 18 | `status` | PM2 + Docker + Nginx status at a glance. |
+
+---
+
 ## 7. Development setup
 
 ```bash
