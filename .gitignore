@@ -39,3 +39,6 @@ storage_local/
 
 # memory directory should never be tracked
 memory/
+
+# tsc incremental cache
+tsconfig.tsbuildinfo

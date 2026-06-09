@@ -35,7 +35,11 @@ log "Resetting to origin/$BRANCH"
 git reset --hard "origin/$BRANCH"
 
 log "Installing dependencies"
-npm ci --silent
+if [[ -f package-lock.json ]]; then
+  npm ci --silent || npm install --silent
+else
+  npm install --silent
+fi
 
 log "Running core-logic tests"
 npm test

@@ -11,6 +11,7 @@ import { FileModel } from '@/models/File';
 import { Vendor } from '@/models/Vendor';
 import { JwtRevocation } from '@/models/JwtRevocation';
 import { getMaintenance } from './maintenance';
+import { isSocialCrawler, ogPreviewHtml } from './og-preview';
 import type { LinkType } from '@/models/Link';
 
 export async function handleLinkDownload(
@@ -56,6 +57,40 @@ export async function handleLinkDownload(
   if (verdict === 'LIMIT_REACHED')
     return jsonError('LIMIT_REACHED', 'download limit reached', 410);
   if (verdict !== 'OK') return jsonError('UNAVAILABLE', 'unavailable', 410);
+
+  // Social-crawler rich preview (Open Graph). Only for shareable, non-secret
+  // links: public/temporary, no password, and not the explicit ?raw=1 fetch.
+  // This serves HTML metadata instead of the bytes and does NOT count as a
+  // download. Private/password links never leak a preview.
+  const reqUrl = new URL(req.url);
+  const isRaw = reqUrl.searchParams.get('raw') === '1';
+  if (
+    !isRaw &&
+    link.type !== 'private' &&
+    !link.passwordHash &&
+    isSocialCrawler(req.headers.get('user-agent'))
+  ) {
+    const previewFile = await FileModel.findOne({
+      _id: link.fileId,
+      vendorId: link.vendorId,
+      status: 'ready'
+    })
+      .select('originalName mimeType sizeBytes')
+      .lean();
+    if (previewFile) {
+      const pageUrl = `${reqUrl.origin}${reqUrl.pathname}`;
+      const html = await ogPreviewHtml({
+        fileName: previewFile.originalName,
+        mimeType: previewFile.mimeType,
+        sizeBytes: previewFile.sizeBytes,
+        pageUrl
+      });
+      return new NextResponse(html, {
+        status: 200,
+        headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'public, max-age=300' }
+      });
+    }
+  }
 
   if (link.passwordHash) {
     const pwd = req.headers.get('x-link-password') || new URL(req.url).searchParams.get('p') || '';

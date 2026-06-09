@@ -10,6 +10,7 @@ const nav = [
   { href: '/admin/vendors', label: 'Vendors' },
   { href: '/admin/usage', label: 'Usage' },
   { href: '/admin/audit-logs', label: 'Audit' },
+  { href: '/admin/seo', label: 'SEO' },
   { href: '/admin/maintenance', label: 'Maintenance' }
 ];
 
@@ -52,7 +53,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
 
       <main className="flex-1 px-4 py-5 md:px-8 md:py-8">
         {children}
-        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-5 gap-1 border-t border-border bg-panel px-2 py-2 safe-pad-bottom md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-6 gap-1 border-t border-border bg-panel px-2 py-2 safe-pad-bottom md:hidden">
           {nav.map((n) => (
             <Link
               key={n.href}

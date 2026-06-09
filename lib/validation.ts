@@ -98,6 +98,26 @@ export const maintenanceSchema = z.object({
   message: z.string().max(500).optional()
 });
 
+export const seoSchema = z.object({
+  siteName: z.string().min(1).max(120).optional(),
+  defaultTitle: z.string().min(1).max(200).optional(),
+  titleTemplate: z
+    .string()
+    .min(1)
+    .max(200)
+    .refine((s) => s.includes('%s'), { message: 'titleTemplate must contain %s' })
+    .optional(),
+  description: z.string().max(400).optional(),
+  keywords: z.array(z.string().max(60)).max(40).optional(),
+  canonicalBaseUrl: z.string().url().max(300).optional(),
+  ogImageUrl: z.string().max(500).optional(),
+  twitterHandle: z.string().max(40).optional(),
+  themeColor: z.string().max(40).optional(),
+  faviconUrl: z.string().max(500).optional(),
+  organizationName: z.string().max(120).optional(),
+  robotsIndex: z.boolean().optional()
+});
+
 export const updateFileSchema = z.object({
   originalName: z.string().min(1).max(255).optional(),
   tags: z.array(z.string()).optional(),
