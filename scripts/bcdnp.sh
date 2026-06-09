@@ -36,9 +36,12 @@ env_set() {  # env_set KEY VALUE  (in-place, create if missing)
   local key="$1" val="$2"
   touch "$ENV_FILE"
   if grep -qE "^$key=" "$ENV_FILE"; then
-    # escape & and / for sed replacement
-    local esc; esc="$(printf '%s' "$val" | sed -e 's/[&/\]/\\&/g')"
-    sed -i "s/^$key=.*/$key=$esc/" "$ENV_FILE"
+    # Use awk, NOT sed: the value (e.g. a Mongo URI with //, &, ?, = and a
+    # password full of specials) must be inserted verbatim — sed would
+    # re-interpret &, /, \ and back-references and corrupt it.
+    awk -v k="$key" -v v="$val" \
+      '$0 ~ "^" k "=" {print k"="v; done=1; next} {print} END{if(!done) print k"="v}' \
+      "$ENV_FILE" > "$ENV_FILE.tmp" && mv "$ENV_FILE.tmp" "$ENV_FILE"
   else
     printf '%s=%s\n' "$key" "$val" >> "$ENV_FILE"
   fi
@@ -160,23 +163,33 @@ act_mongo_update() {     # 7
     return
   fi
 
+  info "Tip: for Atlas/managed Mongo, include a db name (/filemanager) and percent-encode"
+  info "password specials (@ -> %40). Allowlist this server's IP in the provider too."
   new="$(ask "New MONGODB_URI" "$cur")"
   [[ -z "$new" ]] && { warn "Cancelled."; return; }
   if [[ "$new" != mongodb://* && "$new" != mongodb+srv://* ]]; then
     err "URI must start with mongodb:// or mongodb+srv://"; return
   fi
+  # Require a database name in the path — a path-less URI silently uses "test".
+  local db_seg="${new#mongodb*://*/}"; db_seg="${db_seg%%[?#]*}"
+  if [[ "$db_seg" == "$new" || -z "$db_seg" ]]; then
+    err "URI must include a database name in the path (e.g. .../filemanager)."; return
+  fi
   [[ "$new" == "$cur" ]] && { warn "Unchanged."; return; }
 
-  info "Testing new connection (8s timeout)…"
+  info "Testing new connection (up to 20s — remote clusters can be slow)…"
   if ! test_out="$( cd "$APP_DIR" && node scripts/admin-tool.js ping-uri --uri "$new" 2>/dev/null )"; then
     err "Could not connect with the new URI — NOT applied."
+    info "Common causes: wrong creds, missing db name, or the provider's IP allowlist."
     info "Run with details: cd $APP_DIR && node scripts/admin-tool.js ping-uri --uri '<uri>'"
     return
   fi
   ok "Connection OK"
+  local new_db_empty=0
   if printf '%s' "$test_out" | grep -q '"hasSuperAdmin":false'; then
     warn "The target database has NO super_admin user — you could be locked out of the panel."
     confirm "Apply anyway?" || { warn "Cancelled."; return; }
+    new_db_empty=1
   fi
 
   # Back up .env, then write the new URI.
@@ -186,7 +199,36 @@ act_mongo_update() {     # 7
 
   info "Reloading panel to apply…"
   pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded" || warn "Reload failed — run option 8"
+
+  # Offer to seed a super_admin when switching to a fresh/empty database.
+  if [[ "$new_db_empty" == "1" ]] && confirm "Create a super_admin in the new database now?"; then
+    act_seed_admin
+  fi
+  info "If the panel won't come back: sudo bcdnp restore-env (option 19)."
   sleep 2; act_health
+}
+
+# Seed the first super_admin (used after switching to an empty managed DB).
+act_seed_admin() {
+  local em pw pw2
+  em="$(ask "New super_admin email")"; [[ -z "$em" ]] && { warn "Cancelled."; return; }
+  pw="$(ask_secret "Password (>= 8 chars)")"; pw2="$(ask_secret "Confirm password")"
+  [[ "$pw" != "$pw2" ]] && { err "Passwords do not match."; return; }
+  [[ ${#pw} -lt 8 ]] && { err "Password must be at least 8 characters."; return; }
+  ( cd "$APP_DIR" && node scripts/seed-admin.js --email "$em" --password "$pw" )
+}
+
+# Restore .env from a backup (recovery if a URI/domain change broke the panel).
+act_env_restore() {
+  hr; info "Available .env backups (newest first):"
+  local backups; mapfile -t backups < <(ls -1t "$ENV_FILE".bak* 2>/dev/null)
+  [[ ${#backups[@]} -eq 0 ]] && { warn "No .env backups found in $APP_DIR."; return; }
+  local i=1; for b in "${backups[@]}"; do printf "  %d) %s\n" "$i" "$b"; ((i++)); done
+  local pick idx; pick="$(ask "Restore which backup #" "1")"; idx=$((pick-1))
+  [[ $idx -lt 0 || $idx -ge ${#backups[@]} ]] && { err "Invalid choice."; return; }
+  cp -a "$ENV_FILE" "$ENV_FILE.bak.$(date +%s)" 2>/dev/null || true
+  cp -a "${backups[$idx]}" "$ENV_FILE" && ok "Restored ${backups[$idx]} -> $ENV_FILE"
+  act_restart_panel; sleep 2; act_health
 }
 
 act_restart_panel() {    # 8
@@ -293,6 +335,8 @@ run_action() {
     16|report|secrets)   act_report;;
     17|env|edit)         act_edit_env;;
     18|status)           act_status;;
+    19|restore-env|rollback) act_env_restore;;
+    20|seed|seed-admin|create-admin) act_seed_admin;;
     0|q|quit|exit)       return 9;;
     *) err "Unknown action: $1";;
   esac
@@ -316,6 +360,8 @@ menu() {
    7) Update MongoDB URI (test+apply)   16) Show install report / secrets
    8) Restart panel (pm2 reload)        17) Edit .env
    9) Restart nginx                     18) Status (pm2 + docker + nginx)
+                                        19) Restore .env from backup
+                                        20) Seed / create super_admin
                                          0) Quit
 MENU
   hr

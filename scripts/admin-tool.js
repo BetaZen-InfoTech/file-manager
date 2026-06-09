@@ -35,10 +35,17 @@ function parseArgs() {
   return args;
 }
 
+// Database name from a Mongo URI path; '' when absent.
+function dbNameFromUri(uri) {
+  const afterHost = String(uri).split(/[?#]/)[0].replace(/^mongodb(\+srv)?:\/\/[^/]+/i, '');
+  return afterHost.replace(/^\//, '').split('/')[0];
+}
+
 async function connect() {
   const uri = process.env.MONGODB_URI;
   if (!uri) { console.error('MONGODB_URI not set in .env'); process.exit(1); }
-  await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
+  // Generous timeouts so a cold/remote managed cluster isn't falsely rejected.
+  await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000, connectTimeoutMS: 20000 });
   return mongoose.connection.collection('users');
 }
 
@@ -59,9 +66,16 @@ async function main() {
   if (sub === 'ping-uri') {
     const uri = args.uri;
     if (!uri) { console.error('Usage: ping-uri --uri <mongodb-uri>'); process.exit(2); }
-    await mongoose.connect(uri, { serverSelectionTimeoutMS: 8000 });
-    const n = await mongoose.connection.collection('users').countDocuments({ role: 'super_admin' });
-    console.log(JSON.stringify({ ok: true, hasSuperAdmin: n > 0, superAdmins: n }));
+    const dbName = dbNameFromUri(uri);
+    if (!dbName) {
+      console.error('URI must include a database name in the path (e.g. .../filemanager).');
+      process.exit(2);
+    }
+    await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000, connectTimeoutMS: 20000 });
+    // Probe the named db explicitly (a path-less URI would default to "test").
+    const users = mongoose.connection.useDb(dbName).collection('users');
+    const n = await users.countDocuments({ role: 'super_admin' });
+    console.log(JSON.stringify({ ok: true, hasSuperAdmin: n > 0, superAdmins: n, dbName }));
     return;
   }
 

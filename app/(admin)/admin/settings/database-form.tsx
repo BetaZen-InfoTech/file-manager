@@ -62,13 +62,20 @@ export default function DatabaseForm({
         <label className="text-xs text-gray-400">New MONGODB_URI</label>
         <input
           className="input"
-          placeholder="mongodb://user:pass@host:27017/db?authSource=admin"
+          placeholder="mongodb+srv://user:pass@cluster.mongodb.net/filemanager?retryWrites=true&w=majority"
           value={uri}
           onChange={(e) => {
             setUri(e.target.value);
             setTested(null);
           }}
         />
+        <p className="text-[11px] text-gray-500">
+          Include a <strong>database name</strong> in the path (e.g. <code>/filemanager</code>) — a
+          path-less URI silently uses <code>test</code>. For Atlas/managed Mongo: percent-encode
+          specials in the password (<code>@</code>→<code>%40</code>), and allowlist this server&apos;s
+          IP in the provider&apos;s Network Access settings (your IP is shown in <code>bcdnp</code>
+          option 1).
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-2">
@@ -97,8 +104,9 @@ export default function DatabaseForm({
       {msg && <div className="text-xs text-gray-300">{msg}</div>}
       <p className="text-[11px] text-gray-500">
         Apply is enabled only after a successful test. The previous <code>.env</code> is backed up
-        automatically. If the panel doesn&apos;t come back, fix it from the server with{' '}
-        <code>sudo bcdnp</code> (option 7).
+        automatically. If the panel doesn&apos;t come back, restore it from the server:{' '}
+        <code>sudo bcdnp restore-env</code>, or manually{' '}
+        <code>cp /var/www/app/.env.bak /var/www/app/.env &amp;&amp; pm2 reload filemanager --update-env</code>.
       </p>
     </div>
   );

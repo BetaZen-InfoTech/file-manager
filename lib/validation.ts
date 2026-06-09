@@ -187,6 +187,12 @@ export const databaseUpdateSchema = z.object({
     .min(12)
     .max(500)
     .regex(/^mongodb(\+srv)?:\/\//i, 'must start with mongodb:// or mongodb+srv://')
+    // Require a database name in the path — a path-less URI silently binds the
+    // whole app to the driver's default "test" database.
+    .refine(
+      (u) => /^mongodb(\+srv)?:\/\/[^/]+\/[^/?#]+/i.test(u),
+      'URI must include a database name in the path, e.g. .../filemanager?retryWrites=true&w=majority'
+    )
 });
 
 export const updateFileSchema = z.object({

@@ -30,7 +30,10 @@ export function setEnvValue(key: string, value: string): string {
   const line = `${key}=${value}`;
   const re = new RegExp(`^${key}=.*$`, 'm');
   if (re.test(content)) {
-    content = content.replace(re, line);
+    // Function replacer so $-sequences in the value (e.g. $ in a Mongo
+    // password, or $&/$1) are inserted literally, not treated as replacement
+    // patterns.
+    content = content.replace(re, () => line);
   } else {
     content = content.replace(/\n?$/, `\n${line}\n`);
   }

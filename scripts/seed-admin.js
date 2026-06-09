@@ -85,7 +85,14 @@ async function main() {
     console.error('MONGODB_URI not set');
     process.exit(1);
   }
-  await mongoose.connect(uri);
+  // Refuse to seed into the driver's default "test" db when the URI omits a
+  // database name in its path (common with Atlas SRV strings).
+  const afterHost = uri.split(/[?#]/)[0].replace(/^mongodb(\+srv)?:\/\/[^/]+/i, '');
+  if (!afterHost.replace(/^\//, '').split('/')[0]) {
+    console.error('MONGODB_URI has no database name in the path — refusing to seed into "test".');
+    process.exit(1);
+  }
+  await mongoose.connect(uri, { serverSelectionTimeoutMS: 20000, connectTimeoutMS: 20000 });
   const User = mongoose.connection.collection('users');
   const existing = await User.findOne({ email: email.toLowerCase() });
   if (existing) {
