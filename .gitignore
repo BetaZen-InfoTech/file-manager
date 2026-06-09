@@ -34,7 +34,10 @@ fms-setup.log
 fms-backup.log
 
 # ── package managers ─────────────────────────────────────────────────────
-# (no lockfile is committed; ignore the others to avoid mixing managers)
+# No lockfile is committed for this repo (installer resolves with `npm install`),
+# so ignore all of them to keep the working tree clean and avoid mixing managers.
+package-lock.json
+npm-shrinkwrap.json
 yarn.lock
 pnpm-lock.yaml
 
