@@ -41,7 +41,9 @@ middleware.ts         security headers + request id
 
 ### Public repo — one command
 
-Point DNS at the VPS first, then:
+Point DNS at the VPS first, then run **either** form below.
+
+**Non-interactive (recommended — fully unattended):**
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/setup.sh \
@@ -51,6 +53,17 @@ curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/
       --admin-email admin@yourdomain.com \
       --admin-pass 'StrongPassword123'
 ```
+
+**Interactive (one line, then answer the prompts):**
+
+```bash
+sudo bash <(curl -fsSL https://raw.githubusercontent.com/BetaZen-InfoTech/file-manager/main/scripts/setup.sh)
+```
+
+> The interactive form uses process substitution (`<(...)`) so the script keeps your
+> keyboard attached and can prompt for domain, email, and admin credentials. A plain
+> `curl ... | sudo bash` with no flags also works — the installer reads prompts from
+> `/dev/tty` — but the `bash <(...)` form is the most reliable.
 
 ### Private repo — clone first, then run
 

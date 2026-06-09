@@ -102,17 +102,26 @@ if ! grep -qiE 'ubuntu' /etc/os-release 2>/dev/null; then
 fi
 
 # ---------- interactive prompts ------------------------------------------- #
+# Reads keyboard input from the controlling terminal (/dev/tty) rather than
+# stdin, so prompts still work when this script is piped in via
+# `curl ... | sudo bash` or `sudo bash <(curl ...)`.
 prompt() {
   local var="$1" question="$2" default="${3:-}" silent="${4:-0}"
   local val=""
   if [[ -n "${!var:-}" ]]; then return; fi
+  if [[ ! -r /dev/tty ]]; then
+    err "No terminal available for interactive prompts."
+    err "Pipe-installs can't prompt — pass flags instead, e.g.:"
+    err "  ... | sudo bash -s -- --domain files.example.com --email you@example.com"
+    exit 2
+  fi
   if [[ -n "$default" ]]; then
-    read -r -p "  ${question} [${default}]: " val
+    read -r -p "  ${question} [${default}]: " val </dev/tty
     val="${val:-$default}"
   elif [[ "$silent" == "1" ]]; then
-    read -r -s -p "  ${question}: " val; echo
+    read -r -s -p "  ${question}: " val </dev/tty; echo
   else
-    read -r -p "  ${question}: " val
+    read -r -p "  ${question}: " val </dev/tty
   fi
   printf -v "$var" '%s' "$val"
 }
@@ -157,7 +166,11 @@ if [[ "$SKIP_DNS_CHECK" -eq 0 && "$SKIP_SSL" -eq 0 ]]; then
     else
       warn "DNS: $DOMAIN resolves to $RESOLVED but VPS IP is $PUBLIC_IP."
       warn "Certbot will fail. Update your DNS A record, then re-run, OR pass --skip-ssl."
-      read -r -p "  Continue anyway? (y/N) " ans
+      if [[ -r /dev/tty ]]; then
+        read -r -p "  Continue anyway? (y/N) " ans </dev/tty
+      else
+        ans="n"; warn "No terminal to confirm — aborting. Pass --skip-dns-check to override."
+      fi
       [[ "${ans,,}" != "y" ]] && exit 1
     fi
   else
