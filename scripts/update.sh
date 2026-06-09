@@ -35,10 +35,12 @@ log "Resetting to origin/$BRANCH"
 git reset --hard "origin/$BRANCH"
 
 log "Installing dependencies"
+# Not silent: npm errors (ERESOLVE, network, disk) must be visible — a silent
+# failure under `set -e` would abort the whole update with no clue why.
 if [[ -f package-lock.json ]]; then
-  npm ci --silent || npm install --silent
+  npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 else
-  npm install --silent
+  npm install --no-audit --no-fund
 fi
 
 log "Running core-logic tests"

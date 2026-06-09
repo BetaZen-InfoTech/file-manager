@@ -401,9 +401,9 @@ step "Installing npm dependencies (this is the long step — ~2-4 min)"
 # Prefer the reproducible `npm ci`, but fall back to `npm install` when no
 # package-lock.json is present (it isn't committed in this repo).
 if [[ -f package-lock.json ]]; then
-  npm ci --silent --no-audit --no-fund || npm install --silent --no-audit --no-fund
+  npm ci --no-audit --no-fund || npm install --no-audit --no-fund
 else
-  npm install --silent --no-audit --no-fund
+  npm install --no-audit --no-fund
 fi
 ok "Dependencies installed"
 
