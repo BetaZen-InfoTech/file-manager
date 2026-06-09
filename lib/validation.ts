@@ -179,6 +179,16 @@ export const razorpayVerifySchema = z.object({
   razorpaySignature: z.string().min(1).max(256)
 });
 
+export const databaseUpdateSchema = z.object({
+  // 'test' just probes the URI; 'apply' writes it to .env and reloads.
+  action: z.enum(['test', 'apply']),
+  uri: z
+    .string()
+    .min(12)
+    .max(500)
+    .regex(/^mongodb(\+srv)?:\/\//i, 'must start with mongodb:// or mongodb+srv://')
+});
+
 export const updateFileSchema = z.object({
   originalName: z.string().min(1).max(255).optional(),
   tags: z.array(z.string()).optional(),

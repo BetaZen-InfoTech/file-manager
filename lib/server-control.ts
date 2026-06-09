@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
 const pExecFile = promisify(execFile);
@@ -127,4 +127,22 @@ export async function forceHttps(domain: string): Promise<HelperResult> {
 export async function setVhostDomain(domain: string): Promise<HelperResult> {
   if (!isValidDomain(domain)) return { ok: false, message: 'invalid domain' };
   return action('set-vhost', [domain]);
+}
+
+/**
+ * Reload the PM2 app after a short delay, detached from this request so the
+ * HTTP response is sent first (the reload restarts the very process serving it).
+ * Used after changing env that needs a restart (e.g. MONGODB_URI).
+ */
+export function schedulePanelReload(delaySeconds = 2): void {
+  try {
+    const child = spawn(
+      'bash',
+      ['-c', `sleep ${delaySeconds}; pm2 reload filemanager --update-env || pm2 restart filemanager --update-env`],
+      { detached: true, stdio: 'ignore' }
+    );
+    child.unref();
+  } catch {
+    /* best-effort */
+  }
 }
