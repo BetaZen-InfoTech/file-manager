@@ -38,6 +38,8 @@
     - 5.6 [Post-install verification](#56-post-install-verification)
     - 5.7 [Hardening checklist](#57-hardening-checklist)
 6. [First login](#6-first-login)
+    - 6.1 [`bcdnp` — root admin console](#61-bcdnp--root-admin-console)
+    - 6.2 [Platform settings: SEO · Domain & SSL · Payments](#62-platform-settings-admin-panel)
 7. [Development setup](#7-development-setup)
 8. [Upgrading](#8-upgrading)
     - 8.1 [Fast path (production)](#81-fast-path-production)
@@ -104,8 +106,14 @@ RBAC, three distinct secure-link types, 3rd-party JWT issuance, and one-command 
 
 ## 3. What you get
 
-- **Admin panel** at `/admin/*` — platform owner administration: vendors, usage, audit, maintenance.
-- **Vendor panel** at `/dashboard/*` — buckets, files, links, API keys, team members.
+- **Admin panel** at `/admin/*` — vendors, usage, audit, **SEO**, **Payments**, **Domain & SSL**, maintenance.
+- **Vendor panel** at `/dashboard/*` — buckets, files, links, API keys, team, **Billing**.
+- **SEO from the panel** — admin-editable title/description/keywords/OG image/favicon/theme/robots,
+  dynamic `/sitemap.xml` + `/robots.txt`, and rich link previews for shared download links.
+- **Domain & SSL from the panel** — issue/renew Let's Encrypt, force HTTPS, repoint the domain —
+  no SSH (runs a narrow, root-owned helper).
+- **Subscription billing** — vendor plans (Free/Pro/Enterprise, editable) paid via **Razorpay** or
+  **PhonePe**; payment upgrades the tenant's limits automatically.
 - **Three secure-link types:**
   - **Public** (`/p/:token`) — unguessable, shareable, never expires until revoked.
   - **Temporary** (`/t/:token`) — time-boxed, auto-expires (cron sweep every 5 min).
@@ -371,6 +379,44 @@ sudo bcdnp ssl             # … by name or number
 | 16 | `report` | Show `/root/file-manager-install-report.txt` (URL, secrets, keys). |
 | 17 | `env` | Edit `.env`, then optionally reload. |
 | 18 | `status` | PM2 + Docker + Nginx status at a glance. |
+
+---
+
+## 6.2 Platform settings (admin panel)
+
+All of the following live under `/admin/*` and require a platform admin login.
+
+### SEO (`/admin/seo`)
+
+Edit site title, title template, meta description, keywords, canonical base URL, OG/Twitter image,
+favicon, theme color, organization name, and the index/noindex toggle. Applied site-wide via Next.js
+metadata, with a generated **`/sitemap.xml`** and **`/robots.txt`**. Shared download links (`/p`,
+`/t`) also unfurl into rich previews — the server returns Open Graph HTML to social crawlers and the
+file bytes to everyone else (private/password links never leak a preview).
+
+### Domain & SSL (`/admin/settings`)
+
+Manage TLS without SSH: live status badges (certificate, expiry, HTTPS redirect, nginx), plus
+buttons to **Issue/renew SSL**, **Force HTTPS**, and **Set domain** (rewrites the nginx vhost and the
+panel's canonical URL). These call a root-owned helper, `/usr/local/sbin/fms-ssl-helper`, which
+exposes only a fixed set of subcommands with strict domain/email validation — installed by
+`setup.sh`. To also change the app's `APP_URL` env, use `sudo bcdnp domain`.
+
+### Payments (`/admin/payments`)
+
+Configure **Razorpay** (Key ID + secret) and **PhonePe** (Merchant ID, Salt key + index, sandbox/prod),
+and manage subscription **plans** (price, billing interval, storage/bucket/API-key/file-size limits,
+active). Gateway secrets are AES-256-GCM encrypted at rest; the UI never echoes them back. Defaults
+(`free` / `pro` / `enterprise`) seed automatically.
+
+**Vendor billing** (`/dashboard/billing`): the vendor owner sees their current plan and can subscribe
+to a paid plan — Razorpay opens an in-page checkout (signature verified server-side), PhonePe
+redirects to its hosted page (confirmed via a server-to-server status check). A successful payment
+activates the plan and raises the tenant's limits for the billing period.
+
+> Webhooks/return URLs are served at `/api/v1/billing/razorpay/verify`,
+> `/api/v1/billing/phonepe/redirect`, and `/api/v1/billing/phonepe/callback`. This is period-based
+> activation via one-time payments (extensible to gateway-native recurring subscriptions later).
 
 ---
 
