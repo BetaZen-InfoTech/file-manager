@@ -90,12 +90,13 @@ sudo bash /var/www/app/scripts/setup.sh
 
 | Flag | Purpose | Default |
 |------|---------|---------|
-| `--domain <fqdn>` | for SSL + Nginx vhost (required) | – |
-| `--email <addr>` | for Let's Encrypt (required unless `--skip-ssl`) | – |
+| `--domain <fqdn>` | for SSL + Nginx vhost | `cdn.betazeninfotech.com` |
+| `--email <addr>` | for Let's Encrypt | falls back to `admin@<domain>` |
 | `--repo <url>` | repo URL (SSH for private, HTTPS for public) | this repo |
 | `--branch <name>` | deploy branch | `main` |
 | `--dir <path>` | install location | `/var/www/app` |
-| `--admin-email`, `--admin-pass` | seed first super_admin (≥ 8 chars) | (skip; seed later) |
+| `--admin-email <addr>` | first super_admin email | `admin@<domain>` |
+| `--admin-pass <pw>` | first super_admin password (≥ 8 chars) | auto-generated (shown in report) |
 | `--skip-ssl` | use if DNS isn't ready yet; re-run certbot later | off |
 | `--skip-dns-check` | don't verify A record matches the VPS public IP | off |
 | `--reset` | wipe DB + MinIO volumes (DANGER — fresh install) | off |

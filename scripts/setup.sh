@@ -132,24 +132,26 @@ fi
 
 if [[ "$INTERACTIVE" -eq 1 ]]; then
   step "Interactive setup — answer a few questions"
-  prompt DOMAIN       "Domain (e.g. cdn.betazeninfotech.com)" ""
-  prompt EMAIL        "Admin email for Let's Encrypt (e.g. you@$DOMAIN)" ""
+  prompt DOMAIN       "Domain" "cdn.betazeninfotech.com"
+  prompt EMAIL        "Email for Let's Encrypt SSL (blank = admin@$DOMAIN)" "admin@${DOMAIN:-localhost}"
   prompt REPO         "Git repo URL (SSH for private, HTTPS for public)" "$REPO"
   prompt BRANCH       "Branch to deploy" "$BRANCH"
   prompt APP_DIR      "Install dir" "$APP_DIR"
   prompt ADMIN_EMAIL  "First super_admin email" "admin@${DOMAIN:-localhost}"
-  prompt ADMIN_PASS   "First super_admin password (≥ 8 chars)" "" 1
+  prompt ADMIN_PASS   "First super_admin password (blank = auto-generate)" "" 1
   echo
 fi
 
-if [[ -z "$DOMAIN" ]]; then
-  err "--domain is required."
-  exit 2
-fi
-if [[ "$SKIP_SSL" -eq 0 && -z "$EMAIL" ]]; then
-  err "--email is required (for Let's Encrypt). Or pass --skip-ssl."
-  exit 2
-fi
+# Default domain when none was supplied (flag or prompt left blank).
+DOMAIN="${DOMAIN:-cdn.betazeninfotech.com}"
+
+# Sensible defaults so a super_admin is always seeded and SSL always has an email.
+#   - admin email defaults to admin@<domain>
+#   - SSL email, if not given, falls back to that same admin@<domain>
+#   - admin password, if not given, is auto-generated later (step 10)
+ADMIN_EMAIL="${ADMIN_EMAIL:-admin@$DOMAIN}"
+EMAIL="${EMAIL:-$ADMIN_EMAIL}"
+
 if [[ -n "$ADMIN_PASS" && ${#ADMIN_PASS} -lt 8 ]]; then
   err "admin password must be at least 8 characters."
   exit 2
@@ -397,16 +399,21 @@ ok "Build complete"
 # ============================================================================
 # 10. Seed first super_admin
 # ============================================================================
-if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASS" ]]; then
-  step "Seeding first super_admin ($ADMIN_EMAIL)"
-  if node scripts/seed-admin.js --email "$ADMIN_EMAIL" --password "$ADMIN_PASS" 2>&1 | tee /tmp/fms-seed.log | grep -q "already exists"; then
-    ok "super_admin already exists — skipping"
-  else
-    ok "super_admin created"
-  fi
+# ADMIN_EMAIL always has a value (defaults to admin@<domain>). If no password
+# was provided, generate a strong random one and surface it in the report.
+ADMIN_PASS_GENERATED=0
+if [[ -z "$ADMIN_PASS" ]]; then
+  ADMIN_PASS="$(openssl rand -base64 18 | tr -dc 'A-Za-z0-9' | cut -c1-16)"
+  ADMIN_PASS_GENERATED=1
+  info "No admin password provided — generated a strong random one (shown at the end)."
+fi
+
+step "Seeding first super_admin ($ADMIN_EMAIL)"
+if node scripts/seed-admin.js --email "$ADMIN_EMAIL" --password "$ADMIN_PASS" 2>&1 | tee /tmp/fms-seed.log | grep -q "already exists"; then
+  ok "super_admin already exists — leaving its password unchanged"
+  ADMIN_PASS_GENERATED=0   # account predates this run; the generated pass wasn't applied
 else
-  warn "No admin credentials passed — seed manually later:"
-  warn "  cd $APP_DIR && node scripts/seed-admin.js --email you@x.com --password '...'"
+  ok "super_admin created ($ADMIN_EMAIL)"
 fi
 
 # ============================================================================
@@ -520,6 +527,14 @@ REPORT_FILE="/root/file-manager-install-report.txt"
   echo "Health:    https://$DOMAIN/api/health"
   echo "Docs:      https://$DOMAIN/docs"
   echo
+  echo "--- Super admin login ---"
+  echo "Email:     $ADMIN_EMAIL"
+  if [[ "$ADMIN_PASS_GENERATED" -eq 1 ]]; then
+    echo "Password:  $ADMIN_PASS   (auto-generated — change after first login)"
+  else
+    echo "Password:  (as provided at install time)"
+  fi
+  echo
   echo "--- Secrets (also in $ENV_FILE) ---"
   echo "GITHUB_WEBHOOK_SECRET=$(grep '^GITHUB_WEBHOOK_SECRET=' "$ENV_FILE" | cut -d= -f2-)"
   echo "S3_ACCESS_KEY=$(grep '^S3_ACCESS_KEY=' "$ENV_FILE" | cut -d= -f2-)"
@@ -544,7 +559,10 @@ echo
 hr
 printf "${GREEN}  File Manager SaaS is up at https://%s/login${RESET}\n" "$DOMAIN"
 hr
-[[ -n "$ADMIN_EMAIL" ]] && printf "  Admin email:  ${GREEN}%s${RESET}\n" "$ADMIN_EMAIL"
+printf "  Admin email:  ${GREEN}%s${RESET}\n" "$ADMIN_EMAIL"
+if [[ "$ADMIN_PASS_GENERATED" -eq 1 ]]; then
+  printf "  Admin pass:   ${GREEN}%s${RESET}  ${DIM}(auto-generated — change it)${RESET}\n" "$ADMIN_PASS"
+fi
 echo  "  Install dir:  $APP_DIR"
 echo  "  Report saved: $REPORT_FILE  (chmod 600)"
 echo
