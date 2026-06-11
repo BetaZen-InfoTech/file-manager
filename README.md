@@ -258,6 +258,7 @@ All flags are optional — anything omitted uses the built-in default (centraliz
 | `--email <addr>` | Let's Encrypt registration | falls back to `admin@<domain>` |
 | `--admin-email <addr>` | first super_admin email | `admin@<domain>` |
 | `--admin-pass <pw>` | first super_admin password (≥ 8 chars) | **auto-generated**, shown in report |
+| `--mongodb-uri <uri>` | use an **external/managed MongoDB** (skips the bundled Mongo container) | bundled local Mongo |
 | `--repo <url>` | repo URL (SSH / HTTPS / token) | this repo |
 | `--branch <name>` | deploy branch | `main` |
 | `--dir <path>` | install location | `/var/www/app` |
@@ -266,6 +267,34 @@ All flags are optional — anything omitted uses the built-in default (centraliz
 | `--reset` | ⚠️ wipe DB + MinIO volumes (fresh install) | off |
 | `--interactive` / `-i` | force prompts | off |
 | `--verbose` / `-v` | shell trace | off |
+
+#### Using an external / managed MongoDB (Atlas, self-hosted, …)
+
+By default the installer runs a **local MongoDB in Docker**. To point it at your own
+MongoDB instead, pass `--mongodb-uri`. The installer then **skips the bundled Mongo
+container** (it still runs MinIO for object storage), writes your URI to `.env`, and
+**tests the connection before continuing** so a bad URI fails fast.
+
+```bash
+sudo bash /var/www/app/scripts/setup.sh \
+  --domain cdn.betazeninfotech.com \
+  --email you@betazeninfotech.com \
+  --mongodb-uri 'mongodb://USER:PASS@mongo.betazeninfotech.com:27017/cdn?authSource=admin'
+```
+
+Atlas SRV example:
+
+```bash
+  --mongodb-uri 'mongodb+srv://USER:PASS@cluster.mongodb.net/cdn?retryWrites=true&w=majority'
+```
+
+> **Requirements:** the URI **must include a database name** in the path (e.g. `/cdn`) — a
+> path-less URI silently uses `test`. Percent-encode special characters in the password
+> (`@` → `%40`). For managed providers (Atlas/DO), **allow-list this server's IP** in the
+> provider's Network Access settings, or the connection test will time out.
+
+You can also switch the database **after** install — live, from `sudo bcdnp` → option 7,
+or the Admin panel → **Domain & SSL → Database** card. Both test the URI before applying.
 
 ### 5.5 What the installer actually does
 

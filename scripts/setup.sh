@@ -48,6 +48,7 @@ SKIP_SSL=0
 SKIP_DNS_CHECK=0
 ADMIN_EMAIL=""
 ADMIN_PASS=""
+MONGODB_URI_OVERRIDE=""   # --mongodb-uri: external/managed Mongo (skips the local container)
 DO_RESET=0   # NOT "RESET" — that name is the ANSI reset color below and would collide
 INTERACTIVE=0
 VERBOSE=0
@@ -94,6 +95,7 @@ while [[ $# -gt 0 ]]; do
     --skip-dns-check)    SKIP_DNS_CHECK=1; shift;;
     --admin-email)       ADMIN_EMAIL="$2"; shift 2;;
     --admin-pass)        ADMIN_PASS="$2"; shift 2;;
+    --mongodb-uri)       MONGODB_URI_OVERRIDE="$2"; shift 2;;
     --reset)             DO_RESET=1; shift;;
     --interactive|-i)    INTERACTIVE=1; shift;;
     --verbose|-v)        VERBOSE=1; shift;;
@@ -297,7 +299,16 @@ if [[ ! -f "$ENV_FILE" || "${DO_RESET:-0}" == "1" ]]; then
   SESSION_COOKIE_SECRET="$(gen_secret)"
   GITHUB_WEBHOOK_SECRET="$(gen_secret)"
   INTERNAL_CRON_SECRET="$(gen_secret)"
-  MONGO_PASSWORD="$(openssl rand -hex 16)"
+  # Mongo: use an external/managed URI (--mongodb-uri) or a generated local one.
+  if [[ -n "$MONGODB_URI_OVERRIDE" ]]; then
+    MONGODB_URI_VALUE="$MONGODB_URI_OVERRIDE"
+    MONGO_USER_VALUE=""
+    MONGO_PASSWORD_VALUE=""
+  else
+    MONGO_PASSWORD_VALUE="$(openssl rand -hex 16)"
+    MONGODB_URI_VALUE="mongodb://fmsuser:$MONGO_PASSWORD_VALUE@127.0.0.1:27017/filemanager?authSource=admin"
+    MONGO_USER_VALUE="fmsuser"
+  fi
   S3_ACCESS_KEY="fms$(openssl rand -hex 4)"
   S3_SECRET_KEY="$(gen_secret)"
 
@@ -312,9 +323,9 @@ SESSION_COOKIE_SECRET=$SESSION_COOKIE_SECRET
 SESSION_COOKIE_NAME=fms_session
 SESSION_TTL_HOURS=12
 
-MONGODB_URI=mongodb://fmsuser:$MONGO_PASSWORD@127.0.0.1:27017/filemanager?authSource=admin
-MONGO_USER=fmsuser
-MONGO_PASSWORD=$MONGO_PASSWORD
+MONGODB_URI=$MONGODB_URI_VALUE
+MONGO_USER=$MONGO_USER_VALUE
+MONGO_PASSWORD=$MONGO_PASSWORD_VALUE
 
 STORAGE_DRIVER=minio
 S3_ENDPOINT=http://127.0.0.1:9000
@@ -371,29 +382,42 @@ done < "$ENV_FILE"
 set +a
 unset _line _key _val
 
+# Run the bundled Mongo container ONLY for a local URI. An external/managed
+# Mongo (Atlas, mongo.example.com, …) means we start MinIO alone.
+if echo "${MONGODB_URI:-}" | grep -qE '@(127\.0\.0\.1|localhost):'; then
+  USE_LOCAL_MONGO=1
+else
+  USE_LOCAL_MONGO=0
+fi
+
 # ============================================================================
 # 8. Infra (Mongo + MinIO) via docker compose
 # ============================================================================
-step "Starting Mongo + MinIO via docker compose"
 if [[ "${DO_RESET:-0}" == "1" ]]; then
   warn "--reset: tearing down volumes too"
   docker compose -f "$APP_DIR/docker-compose.yml" down -v >/dev/null 2>&1 || true
 fi
-docker compose -f "$APP_DIR/docker-compose.yml" up -d >/dev/null
 
-# Wait for Mongo healthy (max ~60s)
-info "Waiting for Mongo to accept connections..."
-for i in $(seq 1 30); do
-  if docker compose -f "$APP_DIR/docker-compose.yml" ps mongo 2>/dev/null | grep -q "healthy"; then
-    ok "Mongo healthy"
-    break
-  fi
-  if [[ $i -eq 30 ]]; then
-    err "Mongo didn't become healthy in 60s. Check: docker compose logs mongo"
-    exit 1
-  fi
-  sleep 2
-done
+if [[ "$USE_LOCAL_MONGO" == "1" ]]; then
+  step "Starting Mongo + MinIO via docker compose"
+  docker compose -f "$APP_DIR/docker-compose.yml" up -d >/dev/null
+  info "Waiting for Mongo to accept connections..."
+  for i in $(seq 1 30); do
+    if docker compose -f "$APP_DIR/docker-compose.yml" ps mongo 2>/dev/null | grep -q "healthy"; then
+      ok "Mongo healthy"
+      break
+    fi
+    if [[ $i -eq 30 ]]; then
+      err "Mongo didn't become healthy in 60s. Check: docker compose logs mongo"
+      exit 1
+    fi
+    sleep 2
+  done
+else
+  step "Using external MongoDB — starting MinIO only"
+  info "MONGODB_URI points off-box; the bundled Mongo container is skipped."
+  docker compose -f "$APP_DIR/docker-compose.yml" up -d minio >/dev/null
+fi
 
 # Wait for MinIO
 info "Waiting for MinIO..."
@@ -421,6 +445,19 @@ else
   npm install --include=dev --no-audit --no-fund
 fi
 ok "Dependencies installed"
+
+# Fail fast on an unreachable external Mongo (clearer than a later seed error).
+if [[ "${USE_LOCAL_MONGO:-1}" == "0" ]]; then
+  step "Testing external MongoDB connection"
+  if node scripts/admin-tool.js ping-uri --uri "$MONGODB_URI" >/dev/null 2>&1; then
+    ok "External Mongo reachable"
+  else
+    err "Cannot reach the external MongoDB at the configured URI."
+    err "Check the credentials, the /<dbname> in the path, and that this server's"
+    err "IP is allow-listed in your Mongo provider's network settings."
+    exit 1
+  fi
+fi
 
 step "Running core-logic tests (security verification)"
 npm test
@@ -540,19 +577,28 @@ fi
 # 13. Let's Encrypt SSL
 # ============================================================================
 if [[ "$SKIP_SSL" -eq 0 ]]; then
+  # The vhost above was just (re)written HTTP-only, so the cert must always be
+  # (re)deployed to it — obtain a new one if missing, reinstall if it exists.
+  # (Previously this step SKIPPED when the cert dir existed, leaving the vhost
+  # with no :443 listener and the site HTTPS-broken.)
   if [[ -d "/etc/letsencrypt/live/$DOMAIN" ]]; then
-    ok "SSL cert already exists for $DOMAIN — skipping"
+    step "Re-deploying existing SSL cert to the nginx vhost for $DOMAIN"
+    if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL" --redirect --reinstall --quiet; then
+      ok "SSL deployed (HTTPS + redirect). Auto-renewal via certbot.timer."
+    else
+      warn "certbot reinstall failed — re-run: sudo certbot --nginx -d $DOMAIN --redirect"
+    fi
   else
     step "Requesting Let's Encrypt SSL cert for $DOMAIN"
     if certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$EMAIL" --redirect --quiet; then
       ok "SSL active. Auto-renewal handled by certbot.timer."
     else
       warn "Certbot failed. DNS may not resolve to this host yet."
-      warn "Re-run later: sudo certbot --nginx -d $DOMAIN"
+      warn "Re-run later: sudo certbot --nginx -d $DOMAIN --redirect"
     fi
   fi
 else
-  warn "--skip-ssl: SSL not configured. Re-run later: sudo certbot --nginx -d $DOMAIN"
+  warn "--skip-ssl: SSL not configured. Re-run later: sudo certbot --nginx -d $DOMAIN --redirect"
 fi
 
 # ============================================================================
