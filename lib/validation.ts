@@ -188,6 +188,28 @@ export const razorpayVerifySchema = z.object({
   razorpaySignature: z.string().min(1).max(256)
 });
 
+const migrationSourceSchema = z.object({
+  endpoint: z.string().url().max(300),
+  region: z.string().max(60).optional(),
+  accessKey: z.string().min(1).max(200),
+  secretKey: z.string().min(1).max(400),
+  bucket: z.string().min(1).max(200),
+  prefix: z.string().max(400).optional(),
+  forcePathStyle: z.boolean().optional()
+});
+
+export const migrationActionSchema = z.object({
+  action: z.enum(['test', 'discover', 'start']),
+  source: migrationSourceSchema,
+  targetVendorId: z.string().min(1).max(64).optional(),
+  targetBucketName: z
+    .string()
+    .min(1)
+    .max(120)
+    .regex(/^[a-zA-Z0-9._-]+$/, 'letters, digits, . _ - only')
+    .optional()
+});
+
 export const databaseUpdateSchema = z.object({
   // 'test' just probes the URI; 'apply' writes it to .env and reloads.
   action: z.enum(['test', 'apply']),

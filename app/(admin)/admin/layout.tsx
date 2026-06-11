@@ -12,6 +12,7 @@ const nav = [
   { href: '/admin/audit-logs', label: 'Audit' },
   { href: '/admin/seo', label: 'SEO' },
   { href: '/admin/payments', label: 'Payments' },
+  { href: '/admin/migration', label: 'Migration' },
   { href: '/admin/settings', label: 'Domain & SSL' },
   { href: '/admin/maintenance', label: 'Maintenance' }
 ];
