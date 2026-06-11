@@ -136,19 +136,24 @@ export async function setVhostDomain(domain: string): Promise<HelperResult> {
  */
 export function schedulePanelReload(delaySeconds = 2): void {
   try {
-    // CRITICAL: pm2 --update-env snapshots THIS process's env. Next.js loaded
-    // the OLD .env values into process.env at boot, so passing them through
-    // would make PM2 re-pin the stale value and the fresh `next start` would
-    // NOT apply the new .env (@next/env only sets a key that's undefined).
-    // Strip the .env-managed keys the panel can change so PM2 re-reads them.
+    // CRITICAL: a changed .env value (e.g. MONGODB_URI) only takes effect with a
+    // FULL restart. `pm2 reload --update-env` keeps PM2's CACHED env, and this
+    // process already has the OLD value in process.env (loaded at boot), so the
+    // old DB would persist. So: (1) strip the .env-managed keys from the child
+    // env so the fresh `pm2 start` doesn't re-capture our stale in-memory values,
+    // and (2) delete + start (not reload) so PM2's env cache is cleared and
+    // Next.js re-reads .env from scratch.
     const env = { ...process.env };
     delete env.MONGODB_URI;
     delete env.APP_URL;
     delete env.PUBLIC_URL_BASE;
     const child = spawn(
       'bash',
-      ['-c', `sleep ${delaySeconds}; pm2 reload filemanager --update-env || pm2 restart filemanager --update-env`],
-      { detached: true, stdio: 'ignore', env }
+      [
+        '-c',
+        `sleep ${delaySeconds}; pm2 delete filemanager >/dev/null 2>&1; pm2 start ecosystem.config.js >/dev/null 2>&1 || pm2 restart filemanager; pm2 save >/dev/null 2>&1`
+      ],
+      { detached: true, stdio: 'ignore', env, cwd: process.cwd() }
     );
     child.unref();
   } catch {

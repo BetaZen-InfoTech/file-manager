@@ -95,7 +95,7 @@ act_domain_setup() {     # 2
     ln -sf "$avail" "$enabled"; rm -f /etc/nginx/sites-enabled/default
     if nginx -t 2>&1 | grep -q successful; then systemctl reload nginx; ok "Nginx vhost rebuilt for $new"; else err "nginx -t failed"; nginx -t; return; fi
   fi
-  pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded with new env"
+  act_restart_panel   # full restart so the new APP_URL in .env is re-read
   if confirm "Issue/redirect SSL for $new now?"; then act_ssl_issue "$new"; fi
 }
 
@@ -156,7 +156,7 @@ act_mongo_update() {     # 7
   if [[ "$choice" == "2" ]]; then
     info "Testing current connection…"
     if ( cd "$APP_DIR" && node scripts/admin-tool.js ping ); then
-      pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded with current .env Mongo settings"
+      act_restart_panel
     else
       err "Mongo connection failed — fix MONGODB_URI (option 1), then retry."
     fi
@@ -197,8 +197,8 @@ act_mongo_update() {     # 7
   env_set MONGODB_URI "$new"
   ok "Updated MONGODB_URI in .env (backup saved)"
 
-  info "Reloading panel to apply…"
-  pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 && ok "Panel reloaded" || warn "Reload failed — run option 8"
+  info "Restarting panel to apply the new database…"
+  act_restart_panel
 
   # Offer to seed a super_admin when switching to a fresh/empty database.
   if [[ "$new_db_empty" == "1" ]] && confirm "Create a super_admin in the new database now?"; then
@@ -232,9 +232,15 @@ act_env_restore() {
 }
 
 act_restart_panel() {    # 8
-  if pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1; then ok "Panel reloaded (zero downtime)"
-  elif ( cd "$APP_DIR" && pm2 start ecosystem.config.js >/dev/null 2>&1 ); then ok "Panel started"
-  else err "PM2 reload failed — see: pm2 logs $PM2_APP"; fi
+  # FULL restart (delete + start), NOT `pm2 reload --update-env`: reload keeps
+  # PM2's cached env, so a changed MONGODB_URI / APP_URL in .env would be
+  # ignored and the app would keep using the old value. delete+start re-reads
+  # .env from scratch.
+  if ( cd "$APP_DIR" && pm2 delete "$PM2_APP" >/dev/null 2>&1; pm2 start ecosystem.config.js >/dev/null 2>&1 ); then
+    ok "Panel restarted (re-read .env)"
+  else
+    err "Restart failed — see: pm2 logs $PM2_APP"
+  fi
   pm2 save >/dev/null 2>&1 || true
 }
 
@@ -253,8 +259,8 @@ act_resolve() {          # 10
   ( cd "$APP_DIR" && node scripts/admin-tool.js ping >/dev/null 2>&1 ) && ok "Mongo reachable" || warn "Mongo not reachable"
   curl -fsS --max-time 3 http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1 && ok "MinIO healthy" || warn "MinIO not healthy"
   # 3) Panel
-  pm2 reload "$PM2_APP" --update-env >/dev/null 2>&1 || ( cd "$APP_DIR" && pm2 start ecosystem.config.js >/dev/null 2>&1 )
-  ok "Panel (re)started"
+  ( cd "$APP_DIR" && pm2 delete "$PM2_APP" >/dev/null 2>&1; pm2 start ecosystem.config.js >/dev/null 2>&1 )
+  ok "Panel (re)started (re-read .env)"
   # 4) Nginx
   if nginx -t >/dev/null 2>&1; then systemctl reload nginx && ok "Nginx reloaded"; else warn "nginx -t failed (run option 9)"; fi
   # 5) Disk
