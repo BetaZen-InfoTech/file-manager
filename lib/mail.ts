@@ -64,5 +64,24 @@ export const MailTemplates = {
       html: `<p>Storage usage for <strong>${vendorName}</strong> has reached ${pct.toFixed(0)}%.</p>`,
       text: `Storage usage for ${vendorName} has reached ${pct.toFixed(0)}%`
     };
+  },
+  passwordReset(resetUrl: string, name?: string): MailInput {
+    const safeName = name || 'there';
+    return {
+      to: '',
+      subject: 'Reset your File Manager password',
+      html: `
+        <div style="font-family:system-ui,sans-serif;max-width:480px;margin:0 auto">
+          <h2 style="color:#111">Reset your password</h2>
+          <p>Hi ${safeName},</p>
+          <p>We received a request to reset your password. Click the button below to choose a new one. This link is valid for <strong>1 hour</strong> and can be used once.</p>
+          <p style="margin:24px 0">
+            <a href="${resetUrl}" style="background:#6366f1;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none;display:inline-block">Reset password</a>
+          </p>
+          <p style="color:#666;font-size:13px">Or paste this link into your browser:<br><a href="${resetUrl}">${resetUrl}</a></p>
+          <p style="color:#666;font-size:13px">If you didn't request this, you can safely ignore this email — your password won't change.</p>
+        </div>`,
+      text: `Reset your password (valid 1 hour, single use): ${resetUrl}\n\nIf you didn't request this, ignore this email.`
+    };
   }
 };

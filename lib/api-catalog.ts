@@ -54,6 +54,24 @@ export const API_GROUPS: ApiGroup[] = [
         body: { email: 'admin@yourdomain.com', password: 'StrongPassword123' }
       },
       {
+        id: 'auth-forgot',
+        method: 'POST',
+        path: '/auth/forgot-password',
+        summary: 'Request password reset',
+        description: 'Emails a single-use, 1-hour reset link. Always returns 200 (never reveals whether the email exists).',
+        auth: 'public',
+        body: { email: 'you@example.com' }
+      },
+      {
+        id: 'auth-reset',
+        method: 'POST',
+        path: '/auth/reset-password',
+        summary: 'Reset password',
+        description: 'Set a new password using the token from the reset email.',
+        auth: 'public',
+        body: { token: '<token-from-email-link>', password: 'newStrongPassword' }
+      },
+      {
         id: 'auth-me',
         method: 'GET',
         path: '/auth/me',
