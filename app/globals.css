@@ -74,6 +74,31 @@ button {
   @apply inline-flex items-center rounded-full border border-warning/40 bg-warning/10 px-2 py-0.5 text-xs text-warning;
 }
 
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-modal {
+  animation: modalIn 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.animate-fade {
+  animation: fadeIn 0.15s ease-out;
+}
+
 @supports (padding: env(safe-area-inset-top)) {
   .safe-pad-top {
     padding-top: env(safe-area-inset-top);
