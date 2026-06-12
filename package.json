@@ -1,6 +1,6 @@
 {
   "name": "file-manager-saas",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "private": true,
   "description": "Multi-tenant file manager SaaS — Next.js + MongoDB + MinIO",
   "scripts": {

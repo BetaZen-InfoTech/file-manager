@@ -1,19 +1,21 @@
 import { ReactNode } from 'react';
-import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session-server';
 import { ImpersonationBanner } from '@/components/ImpersonationBanner';
 import { appVersion } from '@/lib/version';
+import { Logo } from '@/components/Logo';
+import { Icon } from '@/components/Icon';
+import { SidebarNav, NavItem } from '@/components/SidebarNav';
 
 export const dynamic = 'force-dynamic';
 
-const nav = [
-  { href: '/dashboard', label: 'Home' },
-  { href: '/dashboard/buckets', label: 'Buckets' },
-  { href: '/dashboard/api-keys', label: 'API keys' },
-  { href: '/dashboard/jwt', label: 'JWT' },
-  { href: '/dashboard/billing', label: 'Billing' },
-  { href: '/dashboard/trash', label: 'Trash' }
+const nav: NavItem[] = [
+  { href: '/dashboard', label: 'Home', icon: 'home' },
+  { href: '/dashboard/buckets', label: 'Buckets', icon: 'folder' },
+  { href: '/dashboard/api-keys', label: 'API keys', icon: 'key' },
+  { href: '/dashboard/jwt', label: 'JWT', icon: 'token' },
+  { href: '/dashboard/billing', label: 'Billing', icon: 'card' },
+  { href: '/dashboard/trash', label: 'Trash', icon: 'trash' }
 ];
 
 export default async function VendorLayout({ children }: { children: ReactNode }) {
@@ -22,37 +24,40 @@ export default async function VendorLayout({ children }: { children: ReactNode }
   if (['super_admin', 'platform_staff'].includes(session.user.role)) redirect('/admin');
 
   const suspended = session.vendor?.status === 'suspended';
+  const vendorName = session.vendor?.name || 'Vendor';
 
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
-      <aside className="hidden border-r border-border bg-panel md:flex md:w-60 md:flex-col">
-        <div className="border-b border-border px-5 py-4">
-          <div className="text-sm font-semibold text-white">{session.vendor?.name || 'Vendor'}</div>
-          <div className="truncate text-xs text-gray-400">{session.user.email}</div>
+      <aside className="hidden border-r border-border bg-panel md:flex md:w-64 md:flex-col">
+        <div className="flex items-center gap-2.5 border-b border-border px-5 py-4">
+          <Logo className="h-9 w-9" />
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-white">{vendorName}</div>
+            <div className="truncate text-xs text-gray-400">{session.user.email}</div>
+          </div>
         </div>
-        <nav className="flex flex-col gap-1 p-3">
-          {nav.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className="rounded-md px-3 py-2 text-sm text-gray-300 hover:bg-[#1c1c20]"
-            >
-              {n.label}
-            </Link>
-          ))}
-          <form action="/api/v1/auth/logout" method="post" className="mt-2">
-            <button className="w-full rounded-md px-3 py-2 text-left text-sm text-danger hover:bg-[#1c1c20]">
+
+        <div className="flex-1 overflow-y-auto p-3">
+          <SidebarNav items={nav} />
+        </div>
+
+        <div className="border-t border-border p-3">
+          <form action="/api/v1/auth/logout" method="post">
+            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm text-danger transition hover:bg-danger/10">
+              <Icon name="logout" className="h-[18px] w-[18px]" />
               Sign out
             </button>
           </form>
-        </nav>
-        <div className="mt-auto border-t border-border px-5 py-3">
-          <span className="font-mono text-[11px] text-gray-500">v{appVersion()}</span>
+          <div className="px-3 pt-2 font-mono text-[11px] text-gray-600">v{appVersion()}</div>
         </div>
       </aside>
 
+      {/* mobile top bar */}
       <header className="flex items-center justify-between border-b border-border bg-panel px-4 py-3 md:hidden">
-        <div className="text-sm font-semibold text-white">{session.vendor?.name || 'Vendor'}</div>
+        <div className="flex items-center gap-2">
+          <Logo className="h-7 w-7" />
+          <span className="truncate text-sm font-semibold text-white">{vendorName}</span>
+        </div>
         <form action="/api/v1/auth/logout" method="post">
           <button className="text-xs text-danger">Sign out</button>
         </form>
@@ -62,7 +67,7 @@ export default async function VendorLayout({ children }: { children: ReactNode }
         {session.impersonator && (
           <ImpersonationBanner
             vendorUserEmail={session.user.email}
-            vendorName={session.vendor?.name || 'Vendor'}
+            vendorName={vendorName}
             adminEmail={session.impersonator.email}
           />
         )}
@@ -72,18 +77,8 @@ export default async function VendorLayout({ children }: { children: ReactNode }
           </div>
         )}
         {children}
-        <nav className="fixed inset-x-0 bottom-0 z-10 grid grid-cols-6 gap-1 border-t border-border bg-panel px-2 py-2 safe-pad-bottom md:hidden">
-          {nav.map((n) => (
-            <Link
-              key={n.href}
-              href={n.href}
-              className="flex flex-col items-center justify-center rounded-md px-1 py-1 text-[11px] text-gray-300 hover:bg-[#1c1c20]"
-            >
-              {n.label}
-            </Link>
-          ))}
-        </nav>
-        <div className="h-16 md:hidden" />
+        <SidebarNav items={nav} variant="bottom" />
+        <div className="h-20 md:hidden" />
       </main>
     </div>
   );
