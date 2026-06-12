@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Modal } from '@/components/Modal';
+import UploadModal from '@/components/UploadModal';
 
 interface Entry {
   name: string;
@@ -51,7 +52,6 @@ export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const inputRef = useRef<HTMLInputElement>(null);
 
   const [edit, setEdit] = useState<{ path: string; content: string } | null>(null);
   const [rename, setRename] = useState<{ from: string; to: string } | null>(null);
@@ -59,6 +59,7 @@ export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; 
   const [chmod, setChmod] = useState<{ path: string; mode: string } | null>(null);
   const [mk, setMk] = useState<{ kind: 'dir' | 'file'; name: string } | null>(null);
   const [props, setProps] = useState<Entry | null>(null);
+  const [showUpload, setShowUpload] = useState(false);
 
   async function load(p?: string) {
     setLoading(true);
@@ -104,22 +105,6 @@ export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; 
     }
     setEdit({ path: full, content: j.content });
   }
-  async function upload(list: FileList | null) {
-    if (!list?.length) return;
-    setError(null);
-    for (let i = 0; i < list.length; i++) {
-      const fd = new FormData();
-      fd.append('dir', cwd);
-      fd.append('file', list[i]);
-      const r = await fetch(`${apiBase}/upload`, { method: 'POST', body: fd });
-      if (!r.ok) {
-        setError('upload failed');
-        break;
-      }
-    }
-    if (inputRef.current) inputRef.current.value = '';
-    load();
-  }
   function toggle(name: string) {
     setSel((s) => {
       const n = new Set(s);
@@ -151,9 +136,7 @@ export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; 
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => setMk({ kind: 'file', name: 'new.txt' })}>＋ File</button>
             <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => setMk({ kind: 'dir', name: 'new-folder' })}>＋ Folder</button>
-            <label className="btn cursor-pointer px-3 py-1.5 text-xs">
-              <input ref={inputRef} type="file" multiple className="hidden" onChange={(e) => upload(e.target.files)} /> ⬆ Upload
-            </label>
+            <button className="btn px-3 py-1.5 text-xs" onClick={() => setShowUpload(true)}>⬆ Upload</button>
           </div>
         </div>
 
@@ -277,6 +260,14 @@ export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; 
           </dl>
         )}
       </Modal>
+
+      <UploadModal
+        open={showUpload}
+        onClose={() => setShowUpload(false)}
+        apiBase={apiBase}
+        cwd={cwd}
+        onDone={() => load()}
+      />
     </div>
   );
 }

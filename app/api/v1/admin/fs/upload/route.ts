@@ -22,17 +22,25 @@ export async function POST(req: NextRequest) {
   } catch {
     return badRequest('invalid multipart body');
   }
-  const dirRaw = String(form.get('dir') || '');
-  const dir = safePath(dirRaw);
-  if (!dir) return badRequest('invalid dir');
   const file = form.get('file');
   if (!(file instanceof Blob)) return badRequest('file required');
 
-  const name = ((file as any).name || 'upload').replace(/[/\\]/g, '_');
-  const dest = safePath(path.join(dir, name));
+  // Prefer an explicit destination "path" (absolute, may include subdirs — used
+  // for whole-folder drag-and-drop uploads). Fall back to "dir" + filename.
+  const relPath = form.get('path');
+  let dest: string | null;
+  if (typeof relPath === 'string' && relPath.trim()) {
+    dest = safePath(relPath);
+  } else {
+    const dir = safePath(String(form.get('dir') || ''));
+    if (!dir) return badRequest('invalid dir');
+    const name = ((file as any).name || 'upload').replace(/[/\\]/g, '_');
+    dest = safePath(path.join(dir, name));
+  }
   if (!dest) return badRequest('invalid destination');
 
   const buf = Buffer.from(await file.arrayBuffer());
+  await fsp.mkdir(path.dirname(dest), { recursive: true }); // create parent dirs for nested uploads
   await fsp.writeFile(dest, buf);
 
   await audit(p, req, { action: 'fs.upload', resourceType: 'filesystem', meta: { path: dest } });

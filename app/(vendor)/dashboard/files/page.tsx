@@ -15,6 +15,7 @@ export default async function VendorFilesPage() {
         <h1 className="text-2xl font-semibold text-white">Files</h1>
         <p className="mt-1 text-sm text-gray-400">
           Your private file area. Create, edit, upload, zip, and organize files — you can only see and reach your own folder.
+          Files here are kept on the server and <span className="text-gray-300">do not count toward your bucket storage quota</span>.
         </p>
       </div>
       <FsExplorer apiBase="/api/v1/fs" />
