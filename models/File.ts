@@ -17,7 +17,10 @@ const FileSchema = new Schema(
     folderId: { type: Schema.Types.ObjectId, ref: 'Folder', default: null },
 
     originalName: { type: String, required: true },
-    storageKey: { type: String, required: true, unique: true },
+    // NOT unique: content-dedup intentionally lets multiple File rows share one
+    // storage object (see upload dedup + purge-trash refcount). A unique index
+    // here makes the 2nd identical-content upload fail with E11000.
+    storageKey: { type: String, required: true, index: true },
     extension: { type: String, default: '' },
 
     mimeType: { type: String, required: true },

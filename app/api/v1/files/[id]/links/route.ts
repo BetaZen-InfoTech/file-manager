@@ -69,10 +69,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   }).lean();
   if (!file) return notFound('file not found');
 
-  const expiresAt = clampExpiresIn(parsed.data.expiresIn, !!parsed.data.neverExpire);
-  if (parsed.data.type === 'temporary' && !expiresAt) {
+  // A temporary link must carry an explicit lifetime. Check the raw input —
+  // clampExpiresIn() would otherwise silently substitute a 60s default and mask
+  // a missing expiresIn.
+  if (parsed.data.type === 'temporary' && !parsed.data.expiresIn) {
     return badRequest('temporary links require expiresIn');
   }
+  const expiresAt = clampExpiresIn(parsed.data.expiresIn, !!parsed.data.neverExpire);
 
   const token = createLinkToken();
   const passwordHash = parsed.data.password
