@@ -285,3 +285,65 @@ test('[6] Suspension + tenant + RBAC guard', async (t) => {
     assert.equal(guard(noPerm, 'file:upload', { vendorId: 'v1' }), 'FORBIDDEN');
   });
 });
+
+// Mirrors lib/impersonation.ts — admin "log in as vendor" target selection + restore guard.
+const VENDOR_ROLE_RANK = { vendor_owner: 0, vendor_admin: 1, vendor_member: 2 };
+function selectImpersonationTarget(users) {
+  const eligible = users.filter(
+    (u) => u.role in VENDOR_ROLE_RANK && (u.status === undefined || u.status === 'active')
+  );
+  if (eligible.length === 0) return null;
+  eligible.sort((a, b) => {
+    const byRole = VENDOR_ROLE_RANK[a.role] - VENDOR_ROLE_RANK[b.role];
+    if (byRole !== 0) return byRole;
+    return new Date(a.createdAt ?? 0).getTime() - new Date(b.createdAt ?? 0).getTime();
+  });
+  return eligible[0];
+}
+const ADMIN_ROLES = ['super_admin', 'platform_staff'];
+function canRestoreAdmin(admin) {
+  return !!admin && admin.status === 'active' && ADMIN_ROLES.includes(admin.role || '');
+}
+
+test('[7] Impersonation (admin "log in as vendor")', async (t) => {
+  await t.test('prefers vendor_owner over other roles', () => {
+    const target = selectImpersonationTarget([
+      { id: 'm', role: 'vendor_member', createdAt: '2024-01-01' },
+      { id: 'o', role: 'vendor_owner', createdAt: '2025-01-01' },
+      { id: 'a', role: 'vendor_admin', createdAt: '2024-06-01' }
+    ]);
+    assert.equal(target.id, 'o');
+  });
+  await t.test('oldest account wins a same-role tie', () => {
+    const target = selectImpersonationTarget([
+      { id: 'new', role: 'vendor_admin', createdAt: '2025-05-01' },
+      { id: 'old', role: 'vendor_admin', createdAt: '2024-02-01' }
+    ]);
+    assert.equal(target.id, 'old');
+  });
+  await t.test('never targets a platform admin', () => {
+    const target = selectImpersonationTarget([
+      { id: 'super', role: 'super_admin', createdAt: '2020-01-01' }
+    ]);
+    assert.equal(target, null);
+  });
+  await t.test('skips disabled users', () => {
+    const target = selectImpersonationTarget([
+      { id: 'off', role: 'vendor_owner', status: 'disabled', createdAt: '2020-01-01' },
+      { id: 'on', role: 'vendor_member', status: 'active', createdAt: '2024-01-01' }
+    ]);
+    assert.equal(target.id, 'on');
+  });
+  await t.test('vendor with no users -> null', () => {
+    assert.equal(selectImpersonationTarget([]), null);
+  });
+  await t.test('restore allowed for active admin', () => {
+    assert.equal(canRestoreAdmin({ status: 'active', role: 'super_admin' }), true);
+  });
+  await t.test('restore denied for disabled admin', () => {
+    assert.equal(canRestoreAdmin({ status: 'disabled', role: 'super_admin' }), false);
+  });
+  await t.test('restore denied for non-admin role', () => {
+    assert.equal(canRestoreAdmin({ status: 'active', role: 'vendor_owner' }), false);
+  });
+});

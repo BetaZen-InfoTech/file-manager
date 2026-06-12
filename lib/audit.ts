@@ -33,7 +33,11 @@ export async function audit(
       resourceId: input.resourceId || null,
       ip,
       userAgent,
-      meta: input.meta || {}
+      // Stamp the acting admin onto every action taken while impersonating, so
+      // a vendor-user audit trail stays attributable to the real operator.
+      meta: principal?.impersonatorId
+        ? { ...(input.meta || {}), impersonatorId: principal.impersonatorId }
+        : input.meta || {}
     });
   } catch (err) {
     console.error('audit log failed', err);

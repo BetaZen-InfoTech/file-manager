@@ -2,6 +2,7 @@ import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { Bucket } from '@/models/Bucket';
 import { FileModel } from '@/models/File';
+import { getServerSession } from '@/lib/session-server';
 import VendorActions from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -22,10 +23,12 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
   await dbConnect();
   const v: any = await Vendor.findById(params.id).lean();
   if (!v) return <div className="text-gray-400">Vendor not found.</div>;
-  const [bucketCount, fileCount] = await Promise.all([
+  const [bucketCount, fileCount, session] = await Promise.all([
     Bucket.countDocuments({ vendorId: v._id }),
-    FileModel.countDocuments({ vendorId: v._id, status: 'ready' })
+    FileModel.countDocuments({ vendorId: v._id, status: 'ready' }),
+    getServerSession()
   ]);
+  const canImpersonate = session?.user.role === 'super_admin';
 
   const limits = v.limits || {};
   const usage = v.usage || {};
@@ -54,7 +57,12 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
           </div>
           <div className="font-mono text-xs text-gray-500">{v.slug}</div>
         </div>
-        <VendorActions vendorId={String(v._id)} status={v.status} name={v.name} />
+        <VendorActions
+          vendorId={String(v._id)}
+          status={v.status}
+          name={v.name}
+          canImpersonate={canImpersonate}
+        />
       </div>
 
       {/* stat cards */}

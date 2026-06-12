@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session-server';
+import { ImpersonationBanner } from '@/components/ImpersonationBanner';
 
 export const dynamic = 'force-dynamic';
 
@@ -54,6 +55,13 @@ export default async function VendorLayout({ children }: { children: ReactNode }
       </header>
 
       <main className="flex-1 px-4 py-5 md:px-8 md:py-8">
+        {session.impersonator && (
+          <ImpersonationBanner
+            vendorUserEmail={session.user.email}
+            vendorName={session.vendor?.name || 'Vendor'}
+            adminEmail={session.impersonator.email}
+          />
+        )}
         {suspended && (
           <div className="mb-4 rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-sm text-danger">
             Your account is suspended. Uploads, downloads, and link access are blocked.

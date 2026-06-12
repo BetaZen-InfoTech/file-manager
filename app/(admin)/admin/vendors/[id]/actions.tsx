@@ -7,17 +7,40 @@ import { Modal } from '@/components/Modal';
 export default function VendorActions({
   vendorId,
   status,
-  name
+  name,
+  canImpersonate = false
 }: {
   vendorId: string;
   status: string;
   name: string;
+  canImpersonate?: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [showSuspend, setShowSuspend] = useState(false);
   const [showActivate, setShowActivate] = useState(false);
+  const [showImpersonate, setShowImpersonate] = useState(false);
   const [reason, setReason] = useState('');
+  const [impersonateError, setImpersonateError] = useState<string | null>(null);
+
+  async function loginAs() {
+    setBusy(true);
+    setImpersonateError(null);
+    try {
+      const res = await fetch(`/api/v1/admin/vendors/${vendorId}/impersonate`, { method: 'POST' });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        setImpersonateError(data?.error?.message || 'Could not log in as this vendor.');
+        setBusy(false);
+        return;
+      }
+      // Full navigation so the server-rendered vendor layout reads the new cookie.
+      window.location.href = data?.redirect || '/dashboard';
+    } catch (err: any) {
+      setImpersonateError(err?.message || 'Network error');
+      setBusy(false);
+    }
+  }
 
   async function suspend() {
     setBusy(true);
@@ -41,15 +64,58 @@ export default function VendorActions({
 
   return (
     <>
-      {status === 'suspended' ? (
-        <button className="btn" onClick={() => setShowActivate(true)} disabled={busy}>
-          Activate vendor
-        </button>
-      ) : (
-        <button className="btn-danger" onClick={() => setShowSuspend(true)} disabled={busy}>
-          Suspend vendor
-        </button>
-      )}
+      <div className="flex items-center gap-2">
+        {canImpersonate && (
+          <button
+            className="btn-secondary"
+            onClick={() => {
+              setImpersonateError(null);
+              setShowImpersonate(true);
+            }}
+            disabled={busy}
+          >
+            Log in as
+          </button>
+        )}
+        {status === 'suspended' ? (
+          <button className="btn" onClick={() => setShowActivate(true)} disabled={busy}>
+            Activate vendor
+          </button>
+        ) : (
+          <button className="btn-danger" onClick={() => setShowSuspend(true)} disabled={busy}>
+            Suspend vendor
+          </button>
+        )}
+      </div>
+
+      <Modal
+        open={showImpersonate}
+        onClose={() => setShowImpersonate(false)}
+        title="Log in as this vendor"
+        icon={<span className="text-lg">🔐</span>}
+        footer={
+          <>
+            <button className="btn-secondary px-4 py-2 text-sm" onClick={() => setShowImpersonate(false)}>
+              Cancel
+            </button>
+            <button className="btn px-4 py-2 text-sm" onClick={loginAs} disabled={busy}>
+              {busy ? 'Switching…' : 'Continue'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-sm text-gray-300">
+            You&apos;ll be signed in as <strong className="text-white">{name}</strong>&apos;s account and
+            see exactly what they see. Your admin session pauses for up to 60 minutes — use{' '}
+            <strong className="text-white">Return to admin</strong> in the top banner to come back.
+          </p>
+          <p className="text-xs text-gray-500">
+            This action is logged, and everything you do is attributed to you in the audit trail.
+          </p>
+          {impersonateError && <div className="text-xs text-danger">{impersonateError}</div>}
+        </div>
+      </Modal>
 
       <Modal
         open={showSuspend}

@@ -104,6 +104,8 @@ export interface Principal {
   email?: string;
   subject?: string;
   bucketIds?: string[];
+  /** Set when this session is an admin impersonating a vendor user — the admin's userId. */
+  impersonatorId?: string;
 }
 
 export interface ResourceRef {
@@ -141,4 +143,13 @@ export function can(
 
 export function requireScopes(have: string[], need: string[]): boolean {
   return need.every((n) => have.includes(n));
+}
+
+/**
+ * Who may "log in as" a vendor — only a real super_admin browser session.
+ * Gated on role (not a stored permission) so already-seeded admins qualify
+ * without a permissions migration, and API keys / impersonated sessions never do.
+ */
+export function canImpersonate(principal: Principal | null | undefined): boolean {
+  return !!principal && principal.kind === 'session' && principal.role === 'super_admin';
 }

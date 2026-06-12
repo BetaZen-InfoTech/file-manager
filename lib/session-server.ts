@@ -21,6 +21,12 @@ export interface ServerSession {
     name: string;
     status: string;
   } | null;
+  /** Set when an admin is "logged in as" this vendor user. */
+  impersonator: {
+    id: string;
+    email: string;
+    role: string;
+  } | null;
 }
 
 export async function getServerSession(): Promise<ServerSession | null> {
@@ -48,6 +54,9 @@ export async function getServerSession(): Promise<ServerSession | null> {
         user.permissions?.length > 0 ? (user.permissions as string[]) : permissionsForRole(user.role),
       vendorId: user.vendorId ? String(user.vendorId) : null
     },
-    vendor
+    vendor,
+    impersonator: payload.act
+      ? { id: payload.act.sub, email: payload.act.email, role: payload.act.role }
+      : null
   };
 }

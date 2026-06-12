@@ -71,7 +71,8 @@ async function principalFromSession(token: string): Promise<Principal | null> {
     role: user.role,
     panel: payload.panel,
     permissions: (user.permissions?.length ? user.permissions : permissionsForRole(user.role)) as Permission[],
-    email: user.email
+    email: user.email,
+    impersonatorId: payload.act?.sub
   };
 }
 

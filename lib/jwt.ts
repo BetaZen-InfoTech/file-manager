@@ -4,18 +4,30 @@ import { env } from './env';
 
 const SECRET = new TextEncoder().encode(env.JWT_SECRET);
 
+/** Set on a session when an admin is impersonating ("logged in as") a vendor user. */
+export interface ImpersonationActor {
+  sub: string; // the real admin's userId
+  email: string;
+  role: string;
+}
+
 export interface SessionPayload extends JWTPayload {
   userId: string;
   vendorId: string | null;
   role: string;
   panel: 'admin' | 'vendor';
+  /** Present only on impersonation sessions — the admin acting as this user. */
+  act?: ImpersonationActor;
 }
 
-export async function signSession(payload: Omit<SessionPayload, 'exp' | 'iat'>): Promise<string> {
+export async function signSession(
+  payload: Omit<SessionPayload, 'exp' | 'iat'>,
+  expiresIn: string = `${env.SESSION_TTL_HOURS}h`
+): Promise<string> {
   return new SignJWT(payload as JWTPayload)
     .setProtectedHeader({ alg: 'HS256', typ: 'JWT' })
     .setIssuedAt()
-    .setExpirationTime(`${env.SESSION_TTL_HOURS}h`)
+    .setExpirationTime(expiresIn)
     .setIssuer('filemanager-saas')
     .sign(SECRET);
 }
