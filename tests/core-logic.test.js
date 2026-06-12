@@ -421,3 +421,86 @@ test('[8] Vendor file-manager jail', async (t) => {
     assert.equal(jailParent(home, home), '/');
   });
 });
+
+// -------------------- [9] Audit-remediation invariants --------------------
+// Mirrors the security fixes: API-key bucket-scope fail-closed (rbac.can),
+// safe search regex (lib/search), temporary-link guard, folder-path cascade.
+test('[9] Audit-remediation invariants', async (t) => {
+  // --- API-key bucket scoping: fail closed for bucket-scoped perms ---
+  const isBucketScoped = (perm) => /^(bucket|file|folder|publicurl):/.test(perm);
+  function bucketScopeAllows(bucketIds, perm, resourceBucketId) {
+    if (bucketIds && bucketIds.length > 0 && isBucketScoped(perm)) {
+      if (!resourceBucketId) return false; // fail closed
+      if (!bucketIds.includes(resourceBucketId)) return false;
+    }
+    return true;
+  }
+  await t.test('scoped key without bucketId is denied (fail closed)', () => {
+    assert.equal(bucketScopeAllows(['A'], 'file:download', undefined), false);
+  });
+  await t.test('scoped key with in-scope bucketId is allowed', () => {
+    assert.equal(bucketScopeAllows(['A'], 'file:download', 'A'), true);
+  });
+  await t.test('scoped key with out-of-scope bucketId is denied', () => {
+    assert.equal(bucketScopeAllows(['A'], 'file:download', 'B'), false);
+  });
+  await t.test('unscoped key/session is unaffected', () => {
+    assert.equal(bucketScopeAllows([], 'file:download', undefined), true);
+    assert.equal(bucketScopeAllows(undefined, 'file:download', undefined), true);
+  });
+  await t.test('non-bucket-scoped permission ignores bucket scope', () => {
+    assert.equal(bucketScopeAllows(['A'], 'apikey:create', undefined), true);
+  });
+
+  // --- Safe search regex: metacharacters escaped, length capped ---
+  function safeSearchRegExp(input, maxLen = 100) {
+    const s = (input || '').slice(0, maxLen).trim();
+    if (!s) return null;
+    const escaped = s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(escaped, 'i');
+  }
+  await t.test('regex metacharacters are escaped (no ReDoS / injection)', () => {
+    const re = safeSearchRegExp('(a+)+$');
+    // Matches the literal string, NOT as a catastrophic pattern.
+    assert.equal(re.test('(a+)+$'), true);
+    assert.equal(re.test('aaaaaa'), false);
+    assert.equal(safeSearchRegExp('.*').test('anything'), false); // '.*' is literal now
+    assert.equal(safeSearchRegExp(''), null);
+    assert.equal(safeSearchRegExp('   '), null);
+  });
+  await t.test('overlong input is capped', () => {
+    const re = safeSearchRegExp('a'.repeat(500));
+    assert.ok(re.source.length <= 120);
+  });
+
+  // --- Temporary link must carry a finite explicit lifetime ---
+  const tempLinkValid = (type, expiresIn, neverExpire) =>
+    !(type === 'temporary' && (neverExpire || !expiresIn));
+  await t.test('temporary link rejects missing expiresIn and neverExpire', () => {
+    assert.equal(tempLinkValid('temporary', undefined, false), false);
+    assert.equal(tempLinkValid('temporary', 3600, true), false);
+    assert.equal(tempLinkValid('temporary', 300, false), true);
+    assert.equal(tempLinkValid('public', undefined, true), true); // public may be permanent
+  });
+
+  // --- Folder move/rename cascades path to descendants ---
+  const fullPath = (f) => (f.path === '/' ? `/${f.name}` : `${f.path}/${f.name}`);
+  function cascade(folders, movedId, oldFull, newFull) {
+    return folders.map((d) => {
+      if (d.id === movedId) return d;
+      if (d.path === oldFull || d.path.startsWith(oldFull + '/'))
+        return { ...d, path: newFull + d.path.slice(oldFull.length) };
+      return d;
+    });
+  }
+  await t.test('descendant paths are rewritten on move', () => {
+    // A(/) > B(/A) > C(/A/B). Move B to root D(/), so B.path '/D', cascade C.
+    const folders = [
+      { id: 'C', name: 'C', path: '/A/B' },
+      { id: 'B', name: 'B', path: '/D' } // already moved
+    ];
+    const out = cascade(folders, 'B', '/A/B', '/D/B');
+    assert.equal(out.find((f) => f.id === 'C').path, '/D/B');
+    assert.equal(fullPath(out.find((f) => f.id === 'C')), '/D/B/C');
+  });
+});

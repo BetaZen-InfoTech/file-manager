@@ -57,6 +57,16 @@ export async function POST(req: NextRequest) {
     createdBy: p.userId || null
   });
 
+  // Close the count-then-create race: re-verify after insert and roll back if
+  // concurrent creates pushed the vendor over the limit.
+  if (vendor.limits.maxBuckets) {
+    const n = await Bucket.countDocuments({ vendorId: p.vendorId });
+    if (n > vendor.limits.maxBuckets) {
+      await Bucket.deleteOne({ _id: bucket._id });
+      return badRequest('Bucket limit reached');
+    }
+  }
+
   await audit(p, req, {
     action: 'bucket.create',
     resourceType: 'bucket',

@@ -11,6 +11,7 @@ import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
 import { FileModel } from '@/models/File';
 import { Bucket } from '@/models/Bucket';
+import { Vendor } from '@/models/Vendor';
 
 export const runtime = 'nodejs';
 
@@ -34,10 +35,10 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
-  if (!can(p, 'file:read', { vendorId: p.vendorId })) return forbidden();
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId, status: 'ready' }).lean();
   if (!file) return notFound('file not found');
+  if (!can(p, 'file:read', { vendorId: p.vendorId, bucketId: String(file.bucketId) })) return forbidden();
   if (!isTextual(file.mimeType, file.originalName)) return badRequest('not a text file');
   if (file.sizeBytes > TEXT_MAX) return badRequest('file too large to edit inline (max 1 MB)');
   const { stream } = await storage.getObject(file.storageKey);
@@ -50,7 +51,6 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  if (!can(p, 'file:upload', { vendorId: p.vendorId })) return forbidden();
 
   const body = await safeParseJson(req);
   const parsed = editContentSchema.safeParse(body);
@@ -59,10 +59,25 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId, status: 'ready' });
   if (!file) return notFound('file not found');
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(file.bucketId) })) return forbidden();
   if (!isTextual(file.mimeType, file.originalName)) return badRequest('not a text file');
 
   const buf = Buffer.from(parsed.data.content, 'utf8');
-  const delta = buf.byteLength - file.sizeBytes;
+  const newSize = buf.byteLength;
+
+  // Per-file size caps apply to the RESULTING file (not the delta), so repeated
+  // sub-limit edits can't grow a file past the bucket/vendor maximum.
+  const [bucket, vendor] = await Promise.all([
+    Bucket.findById(file.bucketId).lean(),
+    Vendor.findById(p.vendorId).lean()
+  ]);
+  if (bucket?.settings?.maxFileSizeBytes && newSize > bucket.settings.maxFileSizeBytes)
+    return badRequest('file exceeds bucket maxFileSizeBytes');
+  if (vendor?.limits?.maxFileSizeBytes && newSize > vendor.limits.maxFileSizeBytes)
+    return badRequest('file exceeds maxFileSizeBytes');
+
+  const oldKey = file.storageKey;
+  const delta = newSize - file.sizeBytes;
   if (delta > 0) {
     const quota = await checkQuota(p.vendorId, delta);
     if (!quota.ok) return quotaExceeded();
@@ -79,6 +94,13 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   file.checksum = { sha256: sha256(buf), md5: md5(buf) };
   (file as any).version = ((file as any).version || 1) + 1;
   await file.save();
+
+  // Reclaim the previous object once no other (non-trashed) row references it —
+  // same refcount guard purge-trash uses; prevents an orphan leak per edit.
+  if (oldKey && oldKey !== newKey) {
+    const refs = await FileModel.countDocuments({ storageKey: oldKey, _id: { $ne: file._id }, status: { $ne: 'trashed' } });
+    if (refs === 0) await storage.deleteObject(oldKey).catch(() => {});
+  }
 
   await Promise.all([
     incrementUsage(p.vendorId, delta, 0),

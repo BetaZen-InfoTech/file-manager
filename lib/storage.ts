@@ -39,7 +39,7 @@ export interface StorageDriver {
     key: string,
     uploadId: string,
     parts: { ETag: string; PartNumber: number }[]
-  ): Promise<void>;
+  ): Promise<{ size: number }>;
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
 
@@ -168,6 +168,9 @@ export const storage: StorageDriver = {
         MultipartUpload: { Parts: parts }
       })
     );
+    // Return the authoritative stored size so callers don't trust a client value.
+    const head = await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
+    return { size: typeof head.ContentLength === 'number' ? head.ContentLength : 0 };
   },
 
   async abortMultipart(key, uploadId) {

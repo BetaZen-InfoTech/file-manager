@@ -15,6 +15,7 @@ import {
 import { audit } from '@/lib/audit';
 import { storage, objectKey } from '@/lib/storage';
 import { checkQuota, incrementUsage } from '@/lib/quota';
+import { safeSearchRegExp } from '@/lib/search';
 import { md5, sha256 } from '@/lib/crypto';
 import { env } from '@/lib/env';
 import { fireVendorWebhook } from '@/lib/webhook';
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: { bid: string 
   const url = new URL(req.url);
   const folderId = url.searchParams.get('folderId') || null;
   const showHidden = url.searchParams.get('showHidden') === 'true';
-  const q = url.searchParams.get('q') || '';
+  const q = (url.searchParams.get('q') || '').slice(0, 100);
   const page = Math.max(1, Number(url.searchParams.get('page') || 1));
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 50)));
 
@@ -48,7 +49,8 @@ export async function GET(req: NextRequest, { params }: { params: { bid: string 
     status: 'ready'
   };
   if (!showHidden) filter.isHidden = { $ne: true };
-  if (q) filter.$or = [{ originalName: new RegExp(q, 'i') }, { tags: q }];
+  const qre = safeSearchRegExp(q);
+  if (qre) filter.$or = [{ originalName: qre }, { tags: q }];
 
   const [items, total] = await Promise.all([
     FileModel.find(filter)

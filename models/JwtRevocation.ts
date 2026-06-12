@@ -11,6 +11,11 @@ const JwtRevocationSchema = new Schema(
   { timestamps: true }
 );
 
+// Auto-purge revocations once the underlying JWT can no longer be valid (the
+// revoke route stamps expiresAt past the max possible token lifetime). Keeps the
+// collection — and the per-download lookup — from growing without bound.
+JwtRevocationSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+
 export type JwtRevocationDoc = InferSchemaType<typeof JwtRevocationSchema> & {
   _id: mongoose.Types.ObjectId;
 };

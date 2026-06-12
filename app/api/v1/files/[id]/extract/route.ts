@@ -63,7 +63,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  if (!can(p, 'file:upload', { vendorId: p.vendorId })) return forbidden();
 
   const body = await safeParseJson(req);
   const parsed = extractSchema.safeParse(body);
@@ -72,6 +71,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   await dbConnect();
   const zip = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId, status: 'ready' }).lean();
   if (!zip) return notFound('file not found');
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(zip.bucketId) })) return forbidden();
   if (!/zip/i.test(zip.mimeType) && !/\.zip$/i.test(zip.originalName)) return badRequest('not a zip file');
   if (zip.sizeBytes > ZIP_CAP) return badRequest('zip too large to extract (max 500 MB)');
 

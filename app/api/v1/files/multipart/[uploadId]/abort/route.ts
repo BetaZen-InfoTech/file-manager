@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
+import { can } from '@/lib/rbac';
 import { forbidden, jsonOk, notFound, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { storage } from '@/lib/storage';
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest, { params }: { params: { uploadId: s
     'metadata.uploadId': params.uploadId
   });
   if (!draft) return notFound('upload not found');
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(draft.bucketId) })) return forbidden();
   await storage.abortMultipart(draft.storageKey, params.uploadId);
   draft.status = 'failed';
   await draft.save();

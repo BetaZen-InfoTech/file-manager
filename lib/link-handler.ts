@@ -93,11 +93,16 @@ export async function handleLinkDownload(
   }
 
   if (link.passwordHash) {
-    const pwd = req.headers.get('x-link-password') || new URL(req.url).searchParams.get('p') || '';
+    // Accept the password only via header (never the query string — a ?p= value
+    // leaks into proxy/CDN logs, browser history, and the Referer header).
+    const pwd = req.headers.get('x-link-password') || '';
     const ok = pwd ? await argon2.verify(link.passwordHash, pwd).catch(() => false) : false;
     if (!ok) return jsonError('PASSWORD_REQUIRED', 'password required', 401);
   }
 
+  // Carries the verified third-party JWT (private links) so its bucket scope can
+  // be enforced once the file — and therefore the file's bucket — is known.
+  let privateJwt: { vendorId: string; scopes: string[]; bucketIds?: string[] } | null = null;
   if (link.type === 'private') {
     const auth = req.headers.get('authorization') || '';
     const bearer = auth.toLowerCase().startsWith('bearer ') ? auth.slice(7).trim() : '';
@@ -111,9 +116,10 @@ export async function handleLinkDownload(
       return jsonError('WRONG_TENANT', 'token from other vendor', 403);
     if (access === 'MISSING_SCOPE') return jsonError('MISSING_SCOPE', 'missing scope', 403);
     if (jwt?.jti) {
-      const revoked = await JwtRevocation.findOne({ jti: jwt.jti }).lean();
+      const revoked = await JwtRevocation.findOne({ jti: jwt.jti, vendorId: jwt.vendorId }).lean();
       if (revoked) return jsonError('REVOKED', 'jwt revoked', 401);
     }
+    privateJwt = jwt;
   }
 
   const file = await FileModel.findOne({
@@ -123,8 +129,29 @@ export async function handleLinkDownload(
   }).lean();
   if (!file) return jsonError('NOT_FOUND', 'file not found', 404);
 
+  // Enforce the JWT's bucket scope (a token scoped to specific buckets must not
+  // download a private link pointing at a file in a different bucket).
+  if (privateJwt?.bucketIds && privateJwt.bucketIds.length > 0) {
+    if (!privateJwt.bucketIds.includes(String(file.bucketId))) {
+      return jsonError('WRONG_BUCKET', "token is not scoped to this file's bucket", 403);
+    }
+  }
+
+  // Atomically consume one download slot. This — not the earlier snapshot check —
+  // is the real maxDownloads gate; the conditional $inc closes the TOCTOU where
+  // concurrent requests on a 1-download link would all pass a stale count read.
+  const consumed = await Link.findOneAndUpdate(
+    {
+      _id: link._id,
+      status: 'active',
+      $or: [{ maxDownloads: null }, { $expr: { $lt: ['$downloadCount', '$maxDownloads'] } }]
+    },
+    { $inc: { downloadCount: 1 } },
+    { new: true }
+  );
+  if (!consumed) return jsonError('LIMIT_REACHED', 'download limit reached', 410);
+
   const url = await storage.presignedGet(file.storageKey, 300, file.originalName);
-  await Link.updateOne({ _id: link._id }, { $inc: { downloadCount: 1 } });
 
   await audit(null, req, {
     action: `link.download.${link.type}`,

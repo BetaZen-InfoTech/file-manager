@@ -69,9 +69,15 @@ export async function executeFsOp(d: FsOp, resolve: Resolve): Promise<{ ok?: tru
         const dest = resolve(destInput);
         if (!dest) return { error: 'invalid destination' };
         const items = (d.paths && d.paths.length ? d.paths : [d.path]).map(resolve).filter(Boolean) as string[];
+        if (!items.length) return { error: 'nothing to zip' };
         await new Promise<void>((resolve2, reject) => {
           const output = createWriteStream(dest);
           const archive = archiver('zip', { zlib: { level: 6 } });
+          // Both ends must reject — pipe() does NOT forward dest errors to the
+          // source, so without output.on('error') a dest write failure (EACCES/
+          // ENOSPC/EISDIR) would hang the Promise forever and crash on the
+          // unhandled 'error' event.
+          output.on('error', reject);
           output.on('close', () => resolve2());
           archive.on('error', reject);
           archive.pipe(output);
@@ -81,7 +87,9 @@ export async function executeFsOp(d: FsOp, resolve: Resolve): Promise<{ ok?: tru
               if (st?.isDirectory()) archive.directory(it, path.basename(it));
               else if (st?.isFile()) archive.file(it, { name: path.basename(it) });
             })
-          ).then(() => archive.finalize());
+          )
+            .then(() => archive.finalize())
+            .catch(reject);
         });
         break;
       }

@@ -57,6 +57,14 @@ export async function POST(req: NextRequest) {
     expiresAt,
     createdBy: p.userId || null
   });
+  // Close the count-then-create race: re-verify and roll back if over limit.
+  if (vendor.limits.maxApiKeys) {
+    const n = await ApiKey.countDocuments({ vendorId: p.vendorId, status: 'active' });
+    if (n > vendor.limits.maxApiKeys) {
+      await ApiKey.deleteOne({ _id: doc._id });
+      return badRequest('API key limit reached');
+    }
+  }
   await audit(p, req, {
     action: 'apikey.create',
     resourceType: 'apikey',

@@ -56,7 +56,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  if (!can(p, 'publicurl:create', { vendorId: p.vendorId })) return forbidden();
   const body = await safeParseJson(req);
   const parsed = createLinkSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
@@ -68,12 +67,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     status: 'ready'
   }).lean();
   if (!file) return notFound('file not found');
+  if (!can(p, 'publicurl:create', { vendorId: p.vendorId, bucketId: String(file.bucketId) }))
+    return forbidden();
 
-  // A temporary link must carry an explicit lifetime. Check the raw input —
-  // clampExpiresIn() would otherwise silently substitute a 60s default and mask
-  // a missing expiresIn.
-  if (parsed.data.type === 'temporary' && !parsed.data.expiresIn) {
-    return badRequest('temporary links require expiresIn');
+  // A temporary link must carry an explicit, finite lifetime. Check the raw input:
+  // clampExpiresIn() would otherwise substitute a 60s default for a missing
+  // expiresIn, and neverExpire would turn a "temporary" link permanent.
+  if (parsed.data.type === 'temporary' && (parsed.data.neverExpire || !parsed.data.expiresIn)) {
+    return badRequest('temporary links require an explicit expiresIn and cannot be permanent');
   }
   const expiresAt = clampExpiresIn(parsed.data.expiresIn, !!parsed.data.neverExpire);
 

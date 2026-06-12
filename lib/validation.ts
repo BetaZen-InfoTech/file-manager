@@ -297,6 +297,22 @@ export const moveFolderSchema = z.object({
   parentId: z.string().max(64).nullable().optional()
 });
 
+export const multipartInitSchema = z.object({
+  bucketId: z.string().regex(/^[a-f0-9]{24}$/i, 'invalid bucketId'),
+  folderId: z.string().regex(/^[a-f0-9]{24}$/i, 'invalid folderId').nullable().optional(),
+  originalName: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(160),
+  sizeBytes: z.number().int().nonnegative().optional()
+});
+
+export const multipartCompleteSchema = z.object({
+  parts: z
+    .array(z.object({ PartNumber: z.number().int().min(1).max(10000), ETag: z.string().min(1).max(256) }))
+    .min(1)
+    .max(10000),
+  sizeBytes: z.number().int().nonnegative().optional()
+});
+
 // ---- Server filesystem (admin file manager) ----
 export const fsOpSchema = z.object({
   action: z.enum(['mkdir', 'newfile', 'rename', 'delete', 'chmod', 'copy', 'write', 'zip', 'extract']),

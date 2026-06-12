@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
+import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
@@ -33,6 +34,7 @@ export async function PUT(
     'metadata.uploadId': params.uploadId
   });
   if (!draft) return notFound('upload not found');
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(draft.bucketId) })) return forbidden();
   const buf = Buffer.from(await req.arrayBuffer());
   if (buf.length === 0) return badRequest('empty body');
   const etag = await storage.uploadPart(draft.storageKey, params.uploadId, partNumber, buf);

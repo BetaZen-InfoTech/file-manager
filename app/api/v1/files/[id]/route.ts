@@ -39,6 +39,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   await dbConnect();
   const current = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!current) return notFound('file not found');
+  // Mutating a file requires write capability (and respects API-key bucket scope).
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(current.bucketId) }))
+    return forbidden();
 
   const update: any = {};
   if (parsed.data.originalName) update.originalName = parsed.data.originalName;
@@ -79,8 +82,10 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
-  if (!can(p, 'file:delete', { vendorId: p.vendorId })) return forbidden();
   await dbConnect();
+  const target = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
+  if (!target) return notFound('file not found');
+  if (!can(p, 'file:delete', { vendorId: p.vendorId, bucketId: String(target.bucketId) })) return forbidden();
   const file = await FileModel.findOneAndUpdate(
     { _id: params.id, vendorId: p.vendorId, status: { $ne: 'trashed' } },
     { $set: { status: 'trashed', deletedAt: new Date() } },

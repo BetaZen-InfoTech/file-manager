@@ -10,6 +10,7 @@ import {
   unauthorized
 } from '@/lib/http';
 import { createVendorSchema } from '@/lib/validation';
+import { safeSearchRegExp } from '@/lib/search';
 import { audit } from '@/lib/audit';
 import { Vendor } from '@/models/Vendor';
 import { User } from '@/models/User';
@@ -22,11 +23,11 @@ export async function GET(req: NextRequest) {
   if (!can(p, 'admin:vendor:read')) return forbidden();
   await dbConnect();
   const url = new URL(req.url);
-  const q = url.searchParams.get('q') || '';
   const page = Math.max(1, Number(url.searchParams.get('page') || 1));
   const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 25)));
   const filter: any = {};
-  if (q) filter.$or = [{ name: new RegExp(q, 'i') }, { slug: new RegExp(q, 'i') }];
+  const qre = safeSearchRegExp(url.searchParams.get('q'));
+  if (qre) filter.$or = [{ name: qre }, { slug: qre }];
   const [items, total] = await Promise.all([
     Vendor.find(filter)
       .sort({ createdAt: -1 })

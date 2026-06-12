@@ -22,7 +22,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
-  if (!can(p, 'publicurl:revoke', { vendorId: p.vendorId })) return forbidden();
   const body = await safeParseJson(req);
   const parsed = resetLinksSchema.safeParse(body ?? {});
   if (!parsed.success) return badRequest('Invalid input');
@@ -30,6 +29,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!file) return notFound('file not found');
+  if (!can(p, 'publicurl:revoke', { vendorId: p.vendorId, bucketId: String(file.bucketId) }))
+    return forbidden();
 
   const filter: any = { fileId: file._id, vendorId: p.vendorId, status: 'active' };
   if (parsed.data.types && parsed.data.types.length > 0) filter.type = { $in: parsed.data.types };

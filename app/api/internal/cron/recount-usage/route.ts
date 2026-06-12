@@ -11,8 +11,12 @@ export async function GET(req: NextRequest) {
     return new NextResponse('unauthorized', { status: 401 });
   }
   await dbConnect();
+  // Count 'ready' AND 'trashed': trashed files still occupy storage (and still
+  // count toward usage) until purge-trash deletes the object and decrements.
+  // Excluding them here would free quota for still-stored bytes and double-count
+  // on the later purge decrement, driving usage negative.
   const totals = await FileModel.aggregate([
-    { $match: { status: 'ready' } },
+    { $match: { status: { $in: ['ready', 'trashed'] } } },
     {
       $group: {
         _id: '$vendorId',

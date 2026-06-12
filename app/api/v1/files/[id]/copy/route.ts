@@ -19,7 +19,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  if (!can(p, 'file:upload', { vendorId: p.vendorId })) return forbidden();
 
   const body = await safeParseJson(req);
   const parsed = copyFileSchema.safeParse(body);
@@ -28,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   await dbConnect();
   const src = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId, status: 'ready' }).lean();
   if (!src) return notFound('file not found');
+  if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: String(src.bucketId) })) return forbidden();
 
   let folderId: any = src.folderId || null;
   if (parsed.data.folderId !== undefined) {

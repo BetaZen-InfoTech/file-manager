@@ -16,6 +16,7 @@ import {
 import { audit } from '@/lib/audit';
 import { storage, objectKey } from '@/lib/storage';
 import { checkQuota } from '@/lib/quota';
+import { multipartInitSchema } from '@/lib/validation';
 import { env } from '@/lib/env';
 import { FileModel } from '@/models/File';
 import { Bucket } from '@/models/Bucket';
@@ -27,11 +28,9 @@ export async function POST(req: NextRequest) {
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  const body = (await safeParseJson(req)) as
-    | { bucketId: string; folderId?: string; originalName: string; mimeType: string; sizeBytes: number }
-    | null;
-  if (!body?.bucketId || !body.originalName || !body.mimeType)
-    return badRequest('bucketId, originalName, mimeType required');
+  const parsed = multipartInitSchema.safeParse(await safeParseJson(req));
+  if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
+  const body = parsed.data;
   if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: body.bucketId })) return forbidden();
 
   await dbConnect();

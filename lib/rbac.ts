@@ -120,6 +120,11 @@ const SUSPENDED_BLOCKED: Permission[] = [
   'publicurl:create'
 ];
 
+/** Permissions whose target is a specific bucket (subject to API-key bucket scoping). */
+function isBucketScoped(permission: Permission): boolean {
+  return /^(bucket|file|folder|publicurl):/.test(permission);
+}
+
 export function can(
   principal: Principal | null | undefined,
   permission: Permission,
@@ -135,7 +140,13 @@ export function can(
       return false;
     }
   }
-  if (resource && resource.bucketId && principal.bucketIds && principal.bucketIds.length > 0) {
+  // API-key bucket scoping. A key restricted to specific buckets may act ONLY on
+  // those buckets. For any bucket-scoped permission we FAIL CLOSED: if the caller
+  // didn't supply the resource bucketId, we can't prove the action is in-scope, so
+  // deny rather than silently allow cross-bucket access. (Unscoped keys/sessions —
+  // bucketIds empty — are unaffected.)
+  if (principal.bucketIds && principal.bucketIds.length > 0 && isBucketScoped(permission)) {
+    if (!resource || !resource.bucketId) return false;
     if (!principal.bucketIds.includes(resource.bucketId)) return false;
   }
   return principal.permissions.includes(permission);

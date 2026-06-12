@@ -14,7 +14,6 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
-  if (!can(p, 'file:download', { vendorId: p.vendorId })) return forbidden();
   await dbConnect();
   const file = await FileModel.findOne({
     _id: params.id,
@@ -22,6 +21,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     status: 'ready'
   }).lean();
   if (!file) return notFound('file not found');
+  if (!can(p, 'file:download', { vendorId: p.vendorId, bucketId: String(file.bucketId) }))
+    return forbidden();
   const url = await storage.presignedGet(file.storageKey, 300, file.originalName);
   await audit(p, req, {
     action: 'file.download',

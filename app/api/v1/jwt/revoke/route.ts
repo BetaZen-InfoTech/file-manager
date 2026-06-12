@@ -20,20 +20,21 @@ export async function POST(req: NextRequest) {
   if (!p.vendorId) return forbidden();
   if (!can(p, 'apikey:revoke', { vendorId: p.vendorId })) return forbidden();
   const body = (await safeParseJson(req)) as { jti?: string; subject?: string } | null;
-  if (!body?.jti) return badRequest('jti required');
+  if (!body?.jti || typeof body.jti !== 'string' || body.jti.length > 128) return badRequest('jti required');
   await dbConnect();
-  await JwtRevocation.updateOne(
-    { jti: body.jti },
-    {
-      $setOnInsert: {
-        vendorId: p.vendorId,
-        jti: body.jti,
-        subject: body.subject || '',
-        revokedAt: new Date()
-      }
-    },
-    { upsert: true }
-  );
+  // Tenant-scoped: a vendor can only create/refresh revocations under its own
+  // vendorId. expiresAt is stamped past the maximum possible 3rd-party JWT
+  // lifetime (1 year) so the TTL index can later auto-purge it.
+  const expiresAt = new Date(Date.now() + 366 * 24 * 60 * 60 * 1000);
+  try {
+    await JwtRevocation.updateOne(
+      { jti: body.jti, vendorId: p.vendorId },
+      { $set: { subject: body.subject || '', revokedAt: new Date(), expiresAt } },
+      { upsert: true }
+    );
+  } catch {
+    // Unique jti already revoked (possibly by another tenant) — idempotent success.
+  }
   await audit(p, req, { action: 'jwt.revoke', resourceType: 'jwt', resourceId: body.jti });
   return jsonOk({ ok: true });
 }

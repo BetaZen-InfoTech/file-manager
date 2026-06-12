@@ -5,6 +5,7 @@ import { can } from '@/lib/rbac';
 import { forbidden, jsonOk, notFound, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { Link } from '@/models/Link';
+import { FileModel } from '@/models/File';
 
 export const runtime = 'nodejs';
 
@@ -12,8 +13,12 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
-  if (!can(p, 'publicurl:revoke', { vendorId: p.vendorId })) return forbidden();
   await dbConnect();
+  const existing = await Link.findOne({ _id: params.id, vendorId: p.vendorId, status: 'active' }).lean();
+  if (!existing) return notFound('link not found');
+  const file = await FileModel.findOne({ _id: existing.fileId, vendorId: p.vendorId }).select('bucketId').lean();
+  if (!can(p, 'publicurl:revoke', { vendorId: p.vendorId, bucketId: file ? String(file.bucketId) : undefined }))
+    return forbidden();
   const link = await Link.findOneAndUpdate(
     { _id: params.id, vendorId: p.vendorId, status: 'active' },
     { $set: { status: 'revoked' } },

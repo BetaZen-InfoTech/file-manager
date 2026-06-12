@@ -8,6 +8,7 @@ import {
   jsonOk,
   notFound,
   safeParseJson,
+  suspended,
   unauthorized
 } from '@/lib/http';
 import { updateBucketSchema } from '@/lib/validation';
@@ -34,6 +35,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { bid: strin
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'bucket:update', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
   const body = await safeParseJson(req);
   const parsed = updateBucketSchema.safeParse(body);
@@ -68,6 +70,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { bid: stri
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'bucket:delete', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
   await dbConnect();
   const fileCount = await FileModel.countDocuments({
