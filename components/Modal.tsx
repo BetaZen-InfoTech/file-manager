@@ -39,20 +39,20 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
-        className={`animate-modal relative w-full ${w} rounded-2xl border border-border bg-panel p-5 shadow-2xl shadow-black/60`}
+        className={`animate-modal relative flex max-h-[90vh] w-full ${w} flex-col overflow-hidden rounded-2xl border border-border bg-panel shadow-2xl shadow-black/60`}
       >
         {(title || icon) && (
-          <div className="mb-4 flex items-center gap-3">
+          <div className="flex shrink-0 items-center gap-3 border-b border-border px-5 py-4">
             {icon && (
               <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-accent/15 text-accent">
                 {icon}
               </span>
             )}
-            {title && <h3 className="text-base font-semibold text-white">{title}</h3>}
+            {title && <h3 className="truncate text-base font-semibold text-white">{title}</h3>}
             <button
               onClick={onClose}
               aria-label="Close"
-              className="ml-auto rounded-md p-1 text-gray-400 transition hover:bg-[#1c1c20] hover:text-white"
+              className="ml-auto shrink-0 rounded-md p-1 text-gray-400 transition hover:bg-[#1c1c20] hover:text-white"
             >
               <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2">
                 <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
@@ -60,8 +60,11 @@ export function Modal({
             </button>
           </div>
         )}
-        {children}
-        {footer && <div className="mt-5 flex justify-end gap-2">{footer}</div>}
+        {/* Scrollable body — keeps the header + footer pinned when content is tall. */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex shrink-0 justify-end gap-2 border-t border-border px-5 py-4">{footer}</div>
+        )}
       </div>
     </div>
   );

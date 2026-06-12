@@ -264,7 +264,7 @@ export default function UploadModal({
 
         {/* file list */}
         {total > 0 && (
-          <div className="max-h-72 space-y-1.5 overflow-y-auto pr-1">
+          <div className="space-y-1.5">
             {items.map((it) => (
               <div key={it.id} className="rounded-lg border border-border/60 bg-[#141417] px-3 py-2">
                 <div className="flex items-center justify-between gap-2 text-xs">
