@@ -347,3 +347,77 @@ test('[7] Impersonation (admin "log in as vendor")', async (t) => {
     assert.equal(canRestoreAdmin({ status: 'active', role: 'vendor_owner' }), false);
   });
 });
+
+// -------------------- [8] Vendor file-manager jail --------------------
+// Mirrors lib/server-fs.ts resolveInJail/toRel/jailParent. The promise: a
+// vendor can fully use their own folder but can NEVER reach the parent, the
+// server root, or another vendor's files.
+const path = require('node:path');
+
+function resolveInJail(home, rel) {
+  if (rel == null || rel.includes('\0')) return null;
+  const r = rel.startsWith('/') ? rel : `/${rel}`;
+  const abs = path.resolve(home, '.' + r);
+  if (abs !== home && !abs.startsWith(home + path.sep)) return null;
+  return abs;
+}
+function toRel(home, abs) {
+  if (abs === home) return '/';
+  return '/' + path.relative(home, abs).split(path.sep).join('/');
+}
+function jailParent(home, abs) {
+  if (abs === home) return '/';
+  return toRel(home, path.dirname(abs));
+}
+
+test('[8] Vendor file-manager jail', async (t) => {
+  // Use a POSIX-style home; path.posix keeps the assertions stable cross-OS.
+  const p = path.posix;
+  const _resolveInJail = (home, rel) => {
+    if (rel == null || rel.includes('\0')) return null;
+    const r = rel.startsWith('/') ? rel : `/${rel}`;
+    const abs = p.resolve(home, '.' + r);
+    if (abs !== home && !abs.startsWith(home + p.sep)) return null;
+    return abs;
+  };
+  const _toRel = (home, abs) => (abs === home ? '/' : '/' + p.relative(home, abs));
+  const _jailParent = (home, abs) => (abs === home ? '/' : _toRel(home, p.dirname(abs)));
+  const HOME = '/var/www/vendors/vendorA';
+
+  await t.test('root resolves to home', () => {
+    assert.equal(_resolveInJail(HOME, '/'), HOME);
+    assert.equal(_toRel(HOME, HOME), '/');
+  });
+  await t.test('normal subpaths stay inside', () => {
+    assert.equal(_resolveInJail(HOME, '/docs'), HOME + '/docs');
+    assert.equal(_resolveInJail(HOME, 'docs/report.txt'), HOME + '/docs/report.txt');
+    assert.equal(_toRel(HOME, HOME + '/docs/report.txt'), '/docs/report.txt');
+  });
+  await t.test('parent escape (..) is blocked', () => {
+    assert.equal(_resolveInJail(HOME, '/..'), null);
+    assert.equal(_resolveInJail(HOME, '../'), null);
+    assert.equal(_resolveInJail(HOME, '/docs/../../secret'), null);
+    assert.equal(_resolveInJail(HOME, '/../vendorB'), null); // another vendor
+  });
+  await t.test('absolute server paths are clamped, not honored', () => {
+    // A client-sent absolute path is treated relative to home, never as real /.
+    assert.equal(_resolveInJail(HOME, '/etc/passwd'), HOME + '/etc/passwd');
+    assert.equal(_resolveInJail(HOME, '/var/www/vendors/vendorB'), HOME + '/var/www/vendors/vendorB');
+  });
+  await t.test('null byte is rejected', () => {
+    assert.equal(_resolveInJail(HOME, '/docs/\0evil'), null);
+  });
+  await t.test('parent of home never goes above root', () => {
+    assert.equal(_jailParent(HOME, HOME), '/'); // Up at home stays home
+    assert.equal(_jailParent(HOME, HOME + '/docs'), '/');
+    assert.equal(_jailParent(HOME, HOME + '/docs/sub'), '/docs');
+  });
+  // sanity: the real (path.sep-aware) helpers agree on the happy path
+  await t.test('exported-style helpers agree on subpaths', () => {
+    const home = path.resolve('/srv/vendors/v1');
+    const abs = resolveInJail(home, '/a/b');
+    assert.ok(abs && abs.endsWith(path.join('a', 'b')));
+    assert.equal(toRel(home, home), '/');
+    assert.equal(jailParent(home, home), '/');
+  });
+});

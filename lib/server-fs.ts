@@ -131,3 +131,51 @@ export async function chmodPath(p: string, octal: string): Promise<void> {
 export async function copyPath(from: string, to: string): Promise<void> {
   await fs.cp(from, to, { recursive: true, force: false, errorOnExist: true });
 }
+
+// ---- per-vendor jail -------------------------------------------------------
+// Each vendor gets a private home directory. The vendor file manager is
+// confined to it — they can't reach the parent, the server root, or another
+// vendor's files.
+export const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
+
+export async function vendorHome(vendorId: string): Promise<string> {
+  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(vendorId));
+  await fs.mkdir(home, { recursive: true });
+  return home;
+}
+
+/** Resolve a vendor-relative path inside the jail. Returns null on escape. */
+export function resolveInJail(home: string, rel: string): string | null {
+  if (rel == null || rel.includes('\0')) return null;
+  const r = rel.startsWith('/') ? rel : `/${rel}`;
+  const abs = path.resolve(home, '.' + r);
+  if (abs !== home && !abs.startsWith(home + path.sep)) return null;
+  return abs;
+}
+
+/** Map an absolute path inside the jail back to the vendor-facing path. */
+export function toRel(home: string, abs: string): string {
+  if (abs === home) return '/';
+  return '/' + path.relative(home, abs).split(path.sep).join('/');
+}
+
+/** Parent path, clamped so a vendor can never step above their home ('/'). */
+export function jailParent(home: string, abs: string): string {
+  if (abs === home) return '/';
+  return toRel(home, path.dirname(abs));
+}
+
+/**
+ * Gate the vendor file manager. Requires an authenticated principal bound to a
+ * vendor that isn't suspended, and returns the vendor's jailed home directory.
+ * `error` is set when the caller should respond unauthorized/forbidden.
+ */
+export async function requireVendorFs(
+  req: NextRequest
+): Promise<{ p: NonNullable<Awaited<ReturnType<typeof authenticate>>>; home: string } | { error: 'unauthorized' | 'forbidden' }> {
+  const p = await authenticate(req);
+  if (!p) return { error: 'unauthorized' };
+  if (!p.vendorId || p.vendorStatus === 'suspended') return { error: 'forbidden' };
+  const home = await vendorHome(p.vendorId);
+  return { p, home };
+}

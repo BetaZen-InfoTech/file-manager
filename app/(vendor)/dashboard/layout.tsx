@@ -12,6 +12,7 @@ export const dynamic = 'force-dynamic';
 const nav: NavItem[] = [
   { href: '/dashboard', label: 'Home', icon: 'home' },
   { href: '/dashboard/buckets', label: 'Buckets', icon: 'folder' },
+  { href: '/dashboard/files', label: 'Files', icon: 'files' },
   { href: '/dashboard/api-keys', label: 'API keys', icon: 'key' },
   { href: '/dashboard/jwt', label: 'JWT', icon: 'token' },
   { href: '/dashboard/billing', label: 'Billing', icon: 'card' },

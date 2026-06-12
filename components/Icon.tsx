@@ -12,6 +12,7 @@ export type IconName =
   | 'wrench'
   | 'home'
   | 'folder'
+  | 'files'
   | 'key'
   | 'token'
   | 'trash'
@@ -73,6 +74,13 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   folder: <path d="M3 7a2 2 0 0 1 2-2h3.6a2 2 0 0 1 1.4.6L11.8 7H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />,
+  files: (
+    <>
+      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" />
+      <path d="M14 3v5h5" />
+      <path d="M9 13h6M9 17h6" />
+    </>
+  ),
   key: (
     <>
       <circle cx="8" cy="15" r="4" />
