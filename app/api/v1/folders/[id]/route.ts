@@ -21,20 +21,36 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (!can(p, 'folder:update', { vendorId: p.vendorId })) return forbidden();
-  const body = (await safeParseJson(req)) as { name?: string } | null;
-  if (!body?.name || typeof body.name !== 'string') return badRequest('name required');
+  const body = (await safeParseJson(req)) as { name?: string; parentId?: string | null } | null;
+  if (!body) return badRequest('invalid body');
   await dbConnect();
-  const folder = await Folder.findOneAndUpdate(
-    { _id: params.id, vendorId: p.vendorId },
-    { $set: { name: body.name } },
-    { new: true }
-  );
+
+  const folder = await Folder.findOne({ _id: params.id, vendorId: p.vendorId });
   if (!folder) return notFound('folder not found');
-  await audit(p, req, {
-    action: 'folder.update',
-    resourceType: 'folder',
-    resourceId: String(folder._id)
-  });
+
+  if (typeof body.name === 'string' && body.name.trim()) folder.name = body.name.trim();
+
+  // move: set parent + recompute this folder's path (must stay in same bucket,
+  // can't be moved into itself).
+  if (body.parentId !== undefined) {
+    if (body.parentId) {
+      if (String(body.parentId) === String(folder._id)) return badRequest("can't move into itself");
+      const parent = await Folder.findOne({
+        _id: body.parentId,
+        vendorId: p.vendorId,
+        bucketId: folder.bucketId
+      }).lean();
+      if (!parent) return badRequest('target folder not found in this bucket');
+      folder.parentId = parent._id as any;
+      folder.path = parent.path === '/' ? `/${parent.name}` : `${parent.path}/${parent.name}`;
+    } else {
+      folder.parentId = null as any;
+      folder.path = '/';
+    }
+  }
+
+  await folder.save();
+  await audit(p, req, { action: 'folder.update', resourceType: 'folder', resourceId: String(folder._id) });
   return jsonOk(folder);
 }
 

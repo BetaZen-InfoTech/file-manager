@@ -13,6 +13,7 @@ import {
 import { audit } from '@/lib/audit';
 import { updateFileSchema } from '@/lib/validation';
 import { FileModel } from '@/models/File';
+import { Folder } from '@/models/Folder';
 
 export const runtime = 'nodejs';
 
@@ -36,10 +37,29 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const parsed = updateFileSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input');
   await dbConnect();
+  const current = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
+  if (!current) return notFound('file not found');
+
   const update: any = {};
   if (parsed.data.originalName) update.originalName = parsed.data.originalName;
   if (parsed.data.tags) update.tags = parsed.data.tags;
   if (parsed.data.metadata) update.metadata = parsed.data.metadata;
+
+  // move: validate the target folder is in the same bucket (or root)
+  if (parsed.data.folderId !== undefined) {
+    if (parsed.data.folderId) {
+      const target = await Folder.findOne({
+        _id: parsed.data.folderId,
+        vendorId: p.vendorId,
+        bucketId: current.bucketId
+      }).lean();
+      if (!target) return badRequest('target folder not found in this bucket');
+      update.folderId = parsed.data.folderId;
+    } else {
+      update.folderId = null;
+    }
+  }
+
   const file = await FileModel.findOneAndUpdate(
     { _id: params.id, vendorId: p.vendorId },
     { $set: update },

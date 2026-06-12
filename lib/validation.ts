@@ -260,5 +260,39 @@ export const databaseUpdateSchema = z.object({
 export const updateFileSchema = z.object({
   originalName: z.string().min(1).max(255).optional(),
   tags: z.array(z.string()).optional(),
-  metadata: z.record(z.unknown()).optional()
+  metadata: z.record(z.unknown()).optional(),
+  // move: null = bucket root
+  folderId: z.string().max(64).nullable().optional()
+});
+
+export const copyFileSchema = z.object({
+  folderId: z.string().max(64).nullable().optional(),
+  name: z.string().min(1).max(255).optional()
+});
+
+export const editContentSchema = z.object({
+  content: z.string().max(5 * 1024 * 1024) // 5 MB text cap
+});
+
+export const blankFileSchema = z.object({
+  name: z.string().min(1).max(255),
+  folderId: z.string().max(64).nullable().optional(),
+  content: z.string().max(5 * 1024 * 1024).optional(),
+  mimeType: z.string().max(120).optional()
+});
+
+export const archiveSchema = z.object({
+  name: z.string().min(1).max(200).optional(),
+  fileIds: z.array(z.string().max(64)).max(2000).optional(),
+  folderIds: z.array(z.string().max(64)).max(200).optional(),
+  folderId: z.string().max(64).nullable().optional() // where to place the .zip
+});
+
+export const extractSchema = z.object({
+  folderId: z.string().max(64).nullable().optional() // where to extract
+});
+
+export const moveFolderSchema = z.object({
+  name: z.string().min(1).max(120).optional(),
+  parentId: z.string().max(64).nullable().optional()
 });
