@@ -14,6 +14,8 @@ interface VendorDTO {
   storageBytes: number;
   fileCount: number;
   maxStorageBytes: number;
+  diskBytes: number;
+  diskFiles: number;
   folderPath: string;
 }
 
@@ -107,7 +109,7 @@ export default function VendorsGrid({
               {/* usage */}
               <div className="space-y-1.5">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-400">{v.fileCount} files</span>
+                  <span className="text-gray-400">Buckets · {v.fileCount} files</span>
                   <span className="font-mono text-gray-400">
                     {fmtBytes(v.storageBytes)}
                     {v.maxStorageBytes > 0 && <span className="text-gray-600"> / {fmtBytes(v.maxStorageBytes)}</span>}
@@ -118,6 +120,13 @@ export default function VendorsGrid({
                     className={`h-full rounded-full ${pct >= 90 ? 'bg-danger' : pct >= 70 ? 'bg-warning' : 'bg-accent'}`}
                     style={{ width: `${pct}%` }}
                   />
+                </div>
+                <div className="flex items-center justify-between text-[11px] text-gray-500">
+                  <span>File manager <span className="text-gray-600">(disk, not billed)</span></span>
+                  <span className="font-mono">
+                    {fmtBytes(v.diskBytes)}
+                    <span className="text-gray-600"> · {v.diskFiles} file{v.diskFiles === 1 ? '' : 's'}</span>
+                  </span>
                 </div>
               </div>
 

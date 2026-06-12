@@ -3,6 +3,7 @@ import { Vendor } from '@/models/Vendor';
 import { Bucket } from '@/models/Bucket';
 import { getServerSession } from '@/lib/session-server';
 import { realUsageForVendor, fmtBytes } from '@/lib/vendor-stats';
+import { vendorDiskUsage } from '@/lib/server-fs';
 import VendorActions from './actions';
 
 export const dynamic = 'force-dynamic';
@@ -13,9 +14,10 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
   await dbConnect();
   const v: any = await Vendor.findById(params.id).lean();
   if (!v) return <div className="text-gray-400">Vendor not found.</div>;
-  const [bucketCount, realUsage, session] = await Promise.all([
+  const [bucketCount, realUsage, disk, session] = await Promise.all([
     Bucket.countDocuments({ vendorId: v._id }),
     realUsageForVendor(String(v._id)),
+    vendorDiskUsage(String(v._id)),
     getServerSession()
   ]);
   const fileCount = realUsage.fileCount; // real, storage-backed count
@@ -100,6 +102,22 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
           <Mini label="Max buckets" value={String(limits.maxBuckets ?? '∞')} />
           <Mini label="Max API keys" value={String(limits.maxApiKeys ?? '∞')} />
           <Mini label="Files stored" value={String(fileCount)} />
+        </div>
+      </div>
+
+      {/* file-manager disk usage (separate from billed bucket storage) */}
+      <div className="card flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <div className="flex items-center gap-2 text-sm font-medium text-white">
+            <span>📁</span> File manager (disk)
+          </div>
+          <div className="mt-0.5 text-xs text-gray-500">
+            Files in the vendor&apos;s private server folder. <span className="text-gray-400">Not counted toward the bucket storage quota.</span>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="font-mono text-lg font-semibold text-white">{fmtBytes(disk.bytes)}</div>
+          <div className="font-mono text-xs text-gray-500">{disk.files} file{disk.files === 1 ? '' : 's'}</div>
         </div>
       </div>
 

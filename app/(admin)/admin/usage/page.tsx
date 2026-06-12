@@ -1,6 +1,7 @@
 import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { realUsageByVendor, fmtBytes } from '@/lib/vendor-stats';
+import { vendorDiskUsage } from '@/lib/server-fs';
 import SyncUsageButton from '@/components/SyncUsageButton';
 
 export const dynamic = 'force-dynamic';
@@ -11,13 +12,17 @@ export default async function UsagePage() {
     Vendor.find({}).limit(100).lean(),
     realUsageByVendor()
   ]);
+  // Measure each vendor's file-manager disk folder (separate from billed storage).
+  const disks = await Promise.all(vendors.map((v: any) => vendorDiskUsage(String(v._id))));
+  const diskMap = new Map(vendors.map((v: any, i) => [String(v._id), disks[i]]));
   // Sort by real storage used, descending.
   const rows = vendors
     .map((v: any) => {
       const u = usageMap.get(String(v._id)) || { storageBytes: 0, fileCount: 0 };
+      const disk = diskMap.get(String(v._id)) || { bytes: 0, files: 0 };
       const max = v.limits?.maxStorageBytes || 0;
       const pct = max > 0 ? Math.min(100, (u.storageBytes / max) * 100) : 0;
-      return { v, u, max, pct };
+      return { v, u, disk, max, pct };
     })
     .sort((a, b) => b.u.storageBytes - a.u.storageBytes);
 
@@ -38,19 +43,24 @@ export default async function UsagePage() {
           <thead>
             <tr>
               <th>Vendor</th>
-              <th>Storage</th>
+              <th>Bucket storage <span className="font-normal normal-case text-gray-600">(billed)</span></th>
               <th>Files</th>
+              <th>File manager <span className="font-normal normal-case text-gray-600">(disk, not billed)</span></th>
               <th>Quota %</th>
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ v, u, max, pct }) => (
+            {rows.map(({ v, u, disk, max, pct }) => (
               <tr key={String(v._id)}>
                 <td className="font-medium">{v.name}</td>
                 <td className="font-mono text-xs">
                   {fmtBytes(u.storageBytes)} <span className="text-gray-600">/ {fmtBytes(max)}</span>
                 </td>
                 <td>{u.fileCount}</td>
+                <td className="font-mono text-xs text-gray-300">
+                  {fmtBytes(disk.bytes)}
+                  <span className="text-gray-600"> · {disk.files} file{disk.files === 1 ? '' : 's'}</span>
+                </td>
                 <td>
                   <div className="flex items-center gap-2">
                     <div className="h-1.5 w-24 overflow-hidden rounded bg-border">
@@ -66,7 +76,7 @@ export default async function UsagePage() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={4} className="py-8 text-center text-sm text-gray-500">
+                <td colSpan={5} className="py-8 text-center text-sm text-gray-500">
                   No vendors yet.
                 </td>
               </tr>

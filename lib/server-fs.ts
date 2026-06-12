@@ -144,6 +144,42 @@ export async function vendorHome(vendorId: string): Promise<string> {
   return home;
 }
 
+/** Recursively total the real disk bytes + file count under a directory. */
+export async function dirSizeBytes(dir: string): Promise<{ bytes: number; files: number }> {
+  let bytes = 0;
+  let files = 0;
+  async function walk(d: string): Promise<void> {
+    let entries: import('fs').Dirent[];
+    try {
+      entries = await fs.readdir(d, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const full = path.join(d, e.name);
+      if (e.isDirectory()) {
+        await walk(full);
+      } else if (e.isFile()) {
+        try {
+          const st = await fs.stat(full);
+          bytes += st.size;
+          files += 1;
+        } catch {
+          /* unreadable — skip */
+        }
+      }
+    }
+  }
+  await walk(dir);
+  return { bytes, files };
+}
+
+/** Disk usage of a vendor's private file-manager folder (NOT billed/quota). */
+export async function vendorDiskUsage(vendorId: string): Promise<{ bytes: number; files: number }> {
+  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(vendorId));
+  return dirSizeBytes(home);
+}
+
 /** Resolve a vendor-relative path inside the jail. Returns null on escape. */
 export function resolveInJail(home: string, rel: string): string | null {
   if (rel == null || rel.includes('\0')) return null;
