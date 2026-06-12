@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session-server';
+import { appVersion } from '@/lib/version';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,10 +46,16 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             </button>
           </form>
         </nav>
+        <div className="mt-auto border-t border-border px-5 py-3">
+          <span className="font-mono text-[11px] text-gray-500">v{appVersion()}</span>
+        </div>
       </aside>
 
       <header className="flex items-center justify-between border-b border-border bg-panel px-4 py-3 md:hidden">
-        <div className="text-sm font-semibold text-white">Admin</div>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-semibold text-white">Admin</span>
+          <span className="font-mono text-[10px] text-gray-500">v{appVersion()}</span>
+        </div>
         <form action="/api/v1/auth/logout" method="post">
           <button className="text-xs text-danger">Sign out</button>
         </form>
