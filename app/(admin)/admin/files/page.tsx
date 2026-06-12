@@ -4,7 +4,11 @@ import FileManagerClient from './client';
 
 export const dynamic = 'force-dynamic';
 
-export default async function ServerFilesPage() {
+export default async function ServerFilesPage({
+  searchParams
+}: {
+  searchParams?: { path?: string };
+}) {
   const session = await getServerSession();
   if (!session) redirect('/login');
   if (session.user.role !== 'super_admin') {
@@ -14,6 +18,7 @@ export default async function ServerFilesPage() {
       </div>
     );
   }
+  const initialPath = typeof searchParams?.path === 'string' ? searchParams.path : undefined;
   return (
     <div className="space-y-4">
       <div>
@@ -22,7 +27,7 @@ export default async function ServerFilesPage() {
           Browse &amp; manage files on the server. Full filesystem access — be careful.
         </p>
       </div>
-      <FileManagerClient />
+      <FileManagerClient initialPath={initialPath} />
     </div>
   );
 }

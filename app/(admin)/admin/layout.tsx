@@ -16,6 +16,7 @@ const nav: NavItem[] = [
   { href: '/admin/audit-logs', label: 'Audit', icon: 'list' },
   { href: '/admin/seo', label: 'SEO', icon: 'globe' },
   { href: '/admin/payments', label: 'Payments', icon: 'card' },
+  { href: '/admin/smtp', label: 'Email / SMTP', icon: 'mail' },
   { href: '/admin/migration', label: 'Migration', icon: 'transfer' },
   { href: '/admin/settings', label: 'Domain & SSL', icon: 'shield' },
   { href: '/admin/maintenance', label: 'Maintenance', icon: 'wrench' }

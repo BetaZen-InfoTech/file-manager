@@ -2,6 +2,6 @@
 
 import FsExplorer from '@/components/FsExplorer';
 
-export default function FileManagerClient() {
-  return <FsExplorer apiBase="/api/v1/admin/fs" />;
+export default function FileManagerClient({ initialPath }: { initialPath?: string }) {
+  return <FsExplorer apiBase="/api/v1/admin/fs" initialPath={initialPath} />;
 }

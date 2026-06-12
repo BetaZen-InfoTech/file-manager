@@ -1,18 +1,29 @@
 import nodemailer, { Transporter } from 'nodemailer';
-import { env } from './env';
+import { getSmtpConfig, type SmtpConfig } from './smtp/config';
 
-let transporter: Transporter | null = null;
+// Cache the transporter, rebuilding only when the saved SMTP config changes, so
+// admin edits in the panel take effect without a restart.
+let cached: { sig: string; transporter: Transporter; from: string } | null = null;
 
-function getTransporter(): Transporter | null {
-  if (env.MAIL_DRIVER === 'noop' || !env.MAIL_HOST) return null;
-  if (transporter) return transporter;
-  transporter = nodemailer.createTransport({
-    host: env.MAIL_HOST,
-    port: env.MAIL_PORT,
-    secure: env.MAIL_PORT === 465,
-    auth: env.MAIL_USER ? { user: env.MAIL_USER, pass: env.MAIL_PASS } : undefined
+function buildFrom(cfg: SmtpConfig): string {
+  if (!cfg.fromEmail) return '';
+  return cfg.fromName ? `"${cfg.fromName.replace(/"/g, '')}" <${cfg.fromEmail}>` : cfg.fromEmail;
+}
+
+async function getMailer(): Promise<{ transporter: Transporter; from: string } | null> {
+  const cfg = await getSmtpConfig();
+  if (!cfg.enabled || !cfg.host) return null;
+  const sig = JSON.stringify([cfg.host, cfg.port, cfg.secure, cfg.user, cfg.pass, cfg.fromName, cfg.fromEmail]);
+  if (cached && cached.sig === sig) return { transporter: cached.transporter, from: cached.from };
+  const transporter = nodemailer.createTransport({
+    host: cfg.host,
+    port: cfg.port,
+    secure: cfg.secure,
+    auth: cfg.user ? { user: cfg.user, pass: cfg.pass } : undefined
   });
-  return transporter;
+  const from = buildFrom(cfg);
+  cached = { sig, transporter, from };
+  return { transporter, from };
 }
 
 export interface MailInput {
@@ -23,11 +34,11 @@ export interface MailInput {
 }
 
 export async function sendMail(input: MailInput): Promise<{ ok: boolean; reason?: string }> {
-  const t = getTransporter();
-  if (!t) return { ok: false, reason: 'mail not configured' };
+  const m = await getMailer();
+  if (!m) return { ok: false, reason: 'mail not configured' };
   try {
-    await t.sendMail({
-      from: env.MAIL_FROM,
+    await m.transporter.sendMail({
+      from: m.from || undefined,
       to: input.to,
       subject: input.subject,
       html: input.html,
@@ -37,6 +48,18 @@ export async function sendMail(input: MailInput): Promise<{ ok: boolean; reason?
   } catch (err: any) {
     console.error('mail send failed', err);
     return { ok: false, reason: err?.message || 'send failed' };
+  }
+}
+
+/** Verify SMTP connectivity for the admin "test" action without sending. */
+export async function verifyMailer(): Promise<{ ok: boolean; reason?: string }> {
+  const m = await getMailer();
+  if (!m) return { ok: false, reason: 'mail not configured' };
+  try {
+    await m.transporter.verify();
+    return { ok: true };
+  } catch (err: any) {
+    return { ok: false, reason: err?.message || 'verify failed' };
   }
 }
 

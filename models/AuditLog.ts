@@ -10,6 +10,14 @@ const AuditLogSchema = new Schema(
     resourceType: { type: String, default: null },
     resourceId: { type: String, default: null },
     ip: { type: String, default: null },
+    ipChain: { type: String, default: null }, // full X-Forwarded-For chain
+    method: { type: String, default: null }, // HTTP method
+    url: { type: String, default: null }, // request path (secrets stripped)
+    host: { type: String, default: null }, // which server/domain handled it
+    referer: { type: String, default: null },
+    country: { type: String, default: null },
+    city: { type: String, default: null },
+    region: { type: String, default: null },
     userAgent: { type: String, default: null },
     meta: { type: Schema.Types.Mixed, default: {} }
   },

@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Modal } from '@/components/Modal';
@@ -8,12 +9,14 @@ export default function VendorActions({
   vendorId,
   status,
   name,
-  canImpersonate = false
+  canImpersonate = false,
+  folderPath
 }: {
   vendorId: string;
   status: string;
   name: string;
   canImpersonate?: boolean;
+  folderPath?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -64,7 +67,16 @@ export default function VendorActions({
 
   return (
     <>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {canImpersonate && folderPath && (
+          <Link
+            href={`/admin/files?path=${encodeURIComponent(folderPath)}`}
+            className="btn-secondary inline-flex items-center gap-1.5"
+            title="Open this vendor's files in the server file manager"
+          >
+            <span>📁</span> Open folder
+          </Link>
+        )}
         {canImpersonate && (
           <button
             className="btn-secondary"

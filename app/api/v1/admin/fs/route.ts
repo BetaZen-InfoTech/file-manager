@@ -4,7 +4,7 @@ import path from 'path';
 import { badRequest, forbidden, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
 import { fsOpSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
-import { requireFsAdmin, safePath, listDir, FS_DEFAULT_PATH } from '@/lib/server-fs';
+import { requireFsAdmin, safePath, listDir, FS_DEFAULT_PATH, FS_VENDOR_ROOT } from '@/lib/server-fs';
 import { executeFsOp } from '@/lib/fs-ops';
 
 export const runtime = 'nodejs';
@@ -19,7 +19,15 @@ export async function GET(req: NextRequest) {
   const dir = safePath(raw);
   if (!dir) return badRequest('invalid path');
   try {
-    const st = await fsp.stat(dir);
+    let st = await fsp.stat(dir).catch(() => null);
+    // "Open folder" may target a vendor home that hasn't been used yet — create
+    // it on demand (only within the vendor jail root, never arbitrary paths).
+    const vendorRoot = path.resolve(FS_VENDOR_ROOT);
+    if (!st && (dir === vendorRoot || dir.startsWith(vendorRoot + path.sep))) {
+      await fsp.mkdir(dir, { recursive: true });
+      st = await fsp.stat(dir).catch(() => null);
+    }
+    if (!st) return badRequest('cannot read directory');
     if (!st.isDirectory()) return badRequest('not a directory');
     const listing = await listDir(dir);
     return jsonOk({ ...listing, parent: path.dirname(dir), defaultPath: FS_DEFAULT_PATH });

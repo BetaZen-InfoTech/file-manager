@@ -1,39 +1,30 @@
 import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { Bucket } from '@/models/Bucket';
-import { FileModel } from '@/models/File';
 import { getServerSession } from '@/lib/session-server';
+import { realUsageForVendor, fmtBytes } from '@/lib/vendor-stats';
 import VendorActions from './actions';
 
 export const dynamic = 'force-dynamic';
 
-function fmtBytes(n: number): string {
-  if (!n) return '0 B';
-  const u = ['B', 'KB', 'MB', 'GB', 'TB'];
-  let v = n,
-    i = 0;
-  while (v >= 1024 && i < u.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v >= 10 || i === 0 ? 0 : 1)} ${u[i]}`;
-}
+const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
 
 export default async function VendorDetailPage({ params }: { params: { id: string } }) {
   await dbConnect();
   const v: any = await Vendor.findById(params.id).lean();
   if (!v) return <div className="text-gray-400">Vendor not found.</div>;
-  const [bucketCount, fileCount, session] = await Promise.all([
+  const [bucketCount, realUsage, session] = await Promise.all([
     Bucket.countDocuments({ vendorId: v._id }),
-    FileModel.countDocuments({ vendorId: v._id, status: 'ready' }),
+    realUsageForVendor(String(v._id)),
     getServerSession()
   ]);
+  const fileCount = realUsage.fileCount; // real, storage-backed count
   const canImpersonate = session?.user.role === 'super_admin';
+  const folderPath = `${FS_VENDOR_ROOT}/${String(v._id)}`;
 
   const limits = v.limits || {};
-  const usage = v.usage || {};
   const maxStorage = limits.maxStorageBytes || 0;
-  const usedStorage = usage.storageBytes || 0;
+  const usedStorage = realUsage.storageBytes; // real bytes from stored files
   const pct = maxStorage ? Math.min(100, Math.round((usedStorage / maxStorage) * 100)) : 0;
   const planColors: Record<string, string> = {
     free: 'bg-[#1c1c20] text-gray-300',
@@ -62,6 +53,7 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
           status={v.status}
           name={v.name}
           canImpersonate={canImpersonate}
+          folderPath={folderPath}
         />
       </div>
 
@@ -107,7 +99,7 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
           <Mini label="Max file size" value={fmtBytes(limits.maxFileSizeBytes || 0)} />
           <Mini label="Max buckets" value={String(limits.maxBuckets ?? '∞')} />
           <Mini label="Max API keys" value={String(limits.maxApiKeys ?? '∞')} />
-          <Mini label="Files stored" value={String(usage.fileCount ?? fileCount)} />
+          <Mini label="Files stored" value={String(fileCount)} />
         </div>
       </div>
 

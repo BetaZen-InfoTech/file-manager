@@ -42,7 +42,7 @@ const isEditable = (name: string) =>
   /\.(txt|md|json|js|ts|tsx|jsx|css|html?|ya?ml|yml|sh|env|ini|conf|cnf|log|py|go|rb|php|sql|xml|csv|toml|service)$/i.test(name) ||
   !name.includes('.');
 
-export default function FsExplorer({ apiBase }: { apiBase: string }) {
+export default function FsExplorer({ apiBase, initialPath }: { apiBase: string; initialPath?: string }) {
   const [cwd, setCwd] = useState('');
   const [parent, setParent] = useState('');
   const [home, setHome] = useState('');
@@ -80,7 +80,7 @@ export default function FsExplorer({ apiBase }: { apiBase: string }) {
     }
   }
   useEffect(() => {
-    load('');
+    load(initialPath || '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

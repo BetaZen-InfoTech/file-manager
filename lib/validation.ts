@@ -157,6 +157,19 @@ export const paymentConfigSchema = z.object({
     .optional()
 });
 
+export const smtpConfigSchema = z.object({
+  action: z.enum(['save', 'test']).default('save'),
+  enabled: z.boolean().optional(),
+  host: z.string().max(255).optional(),
+  port: z.number().int().min(1).max(65535).optional(),
+  secure: z.boolean().optional(),
+  user: z.string().max(255).optional(),
+  pass: z.string().max(400).optional(),
+  fromName: z.string().max(120).optional(),
+  fromEmail: z.string().email().max(254).optional().or(z.literal('')),
+  testTo: z.string().email().max(254).optional()
+});
+
 export const planUpsertSchema = z.object({
   code: z
     .string()
