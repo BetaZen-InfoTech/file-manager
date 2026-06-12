@@ -1,6 +1,7 @@
 import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { realUsageByVendor, fmtBytes } from '@/lib/vendor-stats';
+import SyncUsageButton from '@/components/SyncUsageButton';
 
 export const dynamic = 'force-dynamic';
 
@@ -22,9 +23,15 @@ export default async function UsagePage() {
 
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-2xl font-semibold text-white">Usage by vendor</h1>
-        <p className="mt-1 text-sm text-gray-400">Live figures aggregated from stored files.</p>
+      <div className="flex flex-col items-start justify-between gap-2 sm:flex-row sm:items-center">
+        <div>
+          <h1 className="text-2xl font-semibold text-white">Usage by vendor</h1>
+          <p className="mt-1 text-sm text-gray-400">
+            Live figures aggregated from stored files. Use Sync to reconcile each vendor&apos;s cached
+            counter (their dashboard &amp; quota) to reality.
+          </p>
+        </div>
+        <SyncUsageButton label="Sync all vendors" />
       </div>
       <div className="card overflow-x-auto">
         <table className="table">

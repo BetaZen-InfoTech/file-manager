@@ -1,42 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { env } from '@/lib/env';
-import { Vendor } from '@/models/Vendor';
-import { FileModel } from '@/models/File';
+import { syncAllVendorsUsage } from '@/lib/vendor-stats';
 
 export const runtime = 'nodejs';
+export const maxDuration = 300;
 
+// Periodic reconciliation of cached storage counters. Uses the same routine as
+// the admin "Sync" button, so cron and manual sync stay identical (and both fix
+// per-bucket counters as well as Vendor.usage).
 export async function GET(req: NextRequest) {
   if ((req.headers.get('x-cron-secret') || '') !== env.INTERNAL_CRON_SECRET) {
     return new NextResponse('unauthorized', { status: 401 });
   }
   await dbConnect();
-  // Count 'ready' AND 'trashed': trashed files still occupy storage (and still
-  // count toward usage) until purge-trash deletes the object and decrements.
-  // Excluding them here would free quota for still-stored bytes and double-count
-  // on the later purge decrement, driving usage negative.
-  const totals = await FileModel.aggregate([
-    { $match: { status: { $in: ['ready', 'trashed'] } } },
-    {
-      $group: {
-        _id: '$vendorId',
-        storageBytes: { $sum: '$sizeBytes' },
-        fileCount: { $sum: 1 }
-      }
-    }
-  ]);
-  let updated = 0;
-  for (const t of totals) {
-    await Vendor.updateOne(
-      { _id: t._id },
-      { $set: { 'usage.storageBytes': t.storageBytes, 'usage.fileCount': t.fileCount } }
-    );
-    updated++;
-  }
-  // Zero out vendors with no remaining files
-  await Vendor.updateMany(
-    { _id: { $nin: totals.map((t) => t._id) } },
-    { $set: { 'usage.storageBytes': 0, 'usage.fileCount': 0 } }
-  );
-  return NextResponse.json({ ok: true, updated });
+  const result = await syncAllVendorsUsage();
+  return NextResponse.json({ ok: true, updated: result.vendors, ...result });
 }

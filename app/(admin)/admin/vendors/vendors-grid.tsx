@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useState } from 'react';
 import { Modal } from '@/components/Modal';
+import SyncUsageButton from '@/components/SyncUsageButton';
 
 interface VendorDTO {
   id: string;
@@ -142,6 +143,7 @@ export default function VendorsGrid({
                     >
                       📁 Open folder
                     </Link>
+                    <SyncUsageButton vendorId={v.id} label="Sync" compact />
                   </>
                 )}
               </div>

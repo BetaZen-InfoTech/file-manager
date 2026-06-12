@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { Modal } from '@/components/Modal';
+import SyncUsageButton from '@/components/SyncUsageButton';
 
 export default function VendorActions({
   vendorId,
@@ -77,6 +78,7 @@ export default function VendorActions({
             <span>📁</span> Open folder
           </Link>
         )}
+        <SyncUsageButton vendorId={vendorId} label="Sync usage" />
         {canImpersonate && (
           <button
             className="btn-secondary"
