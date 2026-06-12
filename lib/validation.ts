@@ -296,3 +296,14 @@ export const moveFolderSchema = z.object({
   name: z.string().min(1).max(120).optional(),
   parentId: z.string().max(64).nullable().optional()
 });
+
+// ---- Server filesystem (admin file manager) ----
+export const fsOpSchema = z.object({
+  action: z.enum(['mkdir', 'newfile', 'rename', 'delete', 'chmod', 'copy', 'write', 'zip', 'extract']),
+  path: z.string().min(1).max(4096),
+  to: z.string().max(4096).optional(),
+  content: z.string().max(2 * 1024 * 1024).optional(),
+  mode: z.string().regex(/^[0-7]{3,4}$/).optional(),
+  paths: z.array(z.string().max(4096)).max(2000).optional(),
+  name: z.string().max(255).optional()
+});

@@ -1,0 +1,133 @@
+import { NextRequest } from 'next/server';
+import fs from 'fs/promises';
+import path from 'path';
+import { authenticate } from './auth';
+
+// Where the file manager opens by default (configurable). Full filesystem is
+// browsable above/below it — this is just the landing directory.
+export const FS_DEFAULT_PATH = process.env.FS_DEFAULT_PATH || '/var/www';
+// Optional jail. Default '/' = full server access (super-admin only). Set
+// FS_ROOT=/var/www to confine the file manager to a subtree.
+export const FS_ROOT = process.env.FS_ROOT || '/';
+
+export interface FsEntry {
+  name: string;
+  type: 'dir' | 'file' | 'symlink' | 'other';
+  size: number;
+  mode: string; // e.g. -rw-r--r--
+  modeOctal: string; // e.g. 644
+  mtime: string;
+  isHidden: boolean;
+  symlinkTarget?: string;
+}
+
+/** Only platform super_admins may use the server file manager. */
+export async function requireFsAdmin(req: NextRequest) {
+  const p = await authenticate(req);
+  if (!p) return null;
+  if (p.role !== 'super_admin') return null;
+  return p;
+}
+
+/** Normalize + jail. Rejects null bytes and escapes outside FS_ROOT. */
+export function safePath(input: string): string | null {
+  if (!input || input.includes('\0')) return null;
+  const resolved = path.resolve(input.startsWith('/') ? input : `/${input}`);
+  const root = path.resolve(FS_ROOT);
+  if (root !== '/' && resolved !== root && !resolved.startsWith(root + path.sep)) return null;
+  return resolved;
+}
+
+function modeToString(mode: number, type: FsEntry['type']): string {
+  const t = type === 'dir' ? 'd' : type === 'symlink' ? 'l' : '-';
+  const rwx = (m: number) => `${m & 4 ? 'r' : '-'}${m & 2 ? 'w' : '-'}${m & 1 ? 'x' : '-'}`;
+  return t + rwx((mode >> 6) & 7) + rwx((mode >> 3) & 7) + rwx(mode & 7);
+}
+
+export async function listDir(dir: string): Promise<{ path: string; entries: FsEntry[] }> {
+  const names = await fs.readdir(dir);
+  const entries: FsEntry[] = [];
+  for (const name of names) {
+    const full = path.join(dir, name);
+    try {
+      const st = await fs.lstat(full);
+      let type: FsEntry['type'] = 'other';
+      let symlinkTarget: string | undefined;
+      if (st.isSymbolicLink()) {
+        type = 'symlink';
+        symlinkTarget = await fs.readlink(full).catch(() => '');
+      } else if (st.isDirectory()) type = 'dir';
+      else if (st.isFile()) type = 'file';
+      const octal = (st.mode & 0o777).toString(8).padStart(3, '0');
+      entries.push({
+        name,
+        type,
+        size: st.size,
+        mode: modeToString(st.mode & 0o777, type),
+        modeOctal: octal,
+        mtime: st.mtime.toISOString(),
+        isHidden: name.startsWith('.'),
+        symlinkTarget
+      });
+    } catch {
+      /* unreadable entry — skip */
+    }
+  }
+  entries.sort((a, b) => {
+    if (a.type === 'dir' && b.type !== 'dir') return -1;
+    if (a.type !== 'dir' && b.type === 'dir') return 1;
+    return a.name.localeCompare(b.name);
+  });
+  return { path: dir, entries };
+}
+
+export async function statEntry(p: string): Promise<FsEntry> {
+  const st = await fs.lstat(p);
+  const type: FsEntry['type'] = st.isDirectory() ? 'dir' : st.isSymbolicLink() ? 'symlink' : st.isFile() ? 'file' : 'other';
+  return {
+    name: path.basename(p),
+    type,
+    size: st.size,
+    mode: modeToString(st.mode & 0o777, type),
+    modeOctal: (st.mode & 0o777).toString(8).padStart(3, '0'),
+    mtime: st.mtime.toISOString(),
+    isHidden: path.basename(p).startsWith('.')
+  };
+}
+
+export async function readTextFile(p: string, maxBytes = 2 * 1024 * 1024): Promise<string> {
+  const st = await fs.stat(p);
+  if (st.size > maxBytes) throw new Error('file too large to edit inline');
+  return fs.readFile(p, 'utf8');
+}
+
+export async function writeTextFile(p: string, content: string): Promise<void> {
+  await fs.writeFile(p, content, 'utf8');
+}
+
+export async function makeDir(p: string): Promise<void> {
+  await fs.mkdir(p, { recursive: false });
+}
+
+export async function createEmptyFile(p: string): Promise<void> {
+  const fh = await fs.open(p, 'wx');
+  await fh.close();
+}
+
+export async function renamePath(from: string, to: string): Promise<void> {
+  await fs.rename(from, to);
+}
+
+export async function removePath(p: string): Promise<void> {
+  await fs.rm(p, { recursive: true, force: false });
+}
+
+export async function chmodPath(p: string, octal: string): Promise<void> {
+  const mode = parseInt(octal, 8);
+  if (Number.isNaN(mode)) throw new Error('invalid mode');
+  await fs.chmod(p, mode);
+}
+
+export async function copyPath(from: string, to: string): Promise<void> {
+  await fs.cp(from, to, { recursive: true, force: false, errorOnExist: true });
+}

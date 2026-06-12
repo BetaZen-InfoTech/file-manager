@@ -10,6 +10,7 @@ export const dynamic = 'force-dynamic';
 
 const nav: NavItem[] = [
   { href: '/admin', label: 'Dashboard', icon: 'grid' },
+  { href: '/admin/files', label: 'File Manager', icon: 'folder' },
   { href: '/admin/vendors', label: 'Vendors', icon: 'users' },
   { href: '/admin/usage', label: 'Usage', icon: 'chart' },
   { href: '/admin/audit-logs', label: 'Audit', icon: 'list' },
