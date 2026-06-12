@@ -208,6 +208,25 @@ act_mongo_update() {     # 7
   sleep 2; act_health
 }
 
+# Mint a server-to-server transfer token (run on the OLD/source server).
+act_transfer_token() {
+  local hours; hours="$(ask "Token valid for (hours)" "24")"
+  info "Minting token…"
+  local tok; tok="$( cd "$APP_DIR" && node scripts/admin-tool.js mint-transfer-token --hours "$hours" 2>/tmp/.fms-tok.err )"
+  hr
+  if [[ -n "$tok" ]]; then
+    ok "Transfer token (copy it — shown once):"
+    printf "  ${GREEN}%s${NC}\n" "$tok"
+    [[ -s /tmp/.fms-tok.err ]] && info "$(cat /tmp/.fms-tok.err)"
+    info "On the NEW server: Admin → Migration → 'From another bcdnp server' →"
+    info "enter this server's URL (https://$(current_domain)) + the token above."
+  else
+    err "Failed to mint token:"; cat /tmp/.fms-tok.err 2>/dev/null
+  fi
+  rm -f /tmp/.fms-tok.err
+  hr
+}
+
 # Seed the first super_admin (used after switching to an empty managed DB).
 act_seed_admin() {
   local em pw pw2
@@ -343,6 +362,7 @@ run_action() {
     18|status)           act_status;;
     19|restore-env|rollback) act_env_restore;;
     20|seed|seed-admin|create-admin) act_seed_admin;;
+    21|transfer-token|token) act_transfer_token;;
     0|q|quit|exit)       return 9;;
     *) err "Unknown action: $1";;
   esac
@@ -368,6 +388,7 @@ menu() {
    9) Restart nginx                     18) Status (pm2 + docker + nginx)
                                         19) Restore .env from backup
                                         20) Seed / create super_admin
+                                        21) Create transfer token (server move)
                                          0) Quit
 MENU
   hr

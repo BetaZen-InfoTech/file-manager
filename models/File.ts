@@ -58,6 +58,12 @@ const FileSchema = new Schema(
 FileSchema.index({ vendorId: 1, bucketId: 1, folderId: 1 });
 FileSchema.index({ vendorId: 1, status: 1 });
 FileSchema.index({ originalName: 'text', tags: 'text' });
+// Idempotency for server-to-server transfer: one copy per source file id per
+// vendor. Partial filter so normal files (no sourceFileId) don't collide on null.
+FileSchema.index(
+  { vendorId: 1, 'metadata.sourceFileId': 1 },
+  { unique: true, partialFilterExpression: { 'metadata.sourceFileId': { $type: 'string' } } }
+);
 
 export type FileDoc = InferSchemaType<typeof FileSchema> & { _id: mongoose.Types.ObjectId };
 

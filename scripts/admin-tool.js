@@ -20,6 +20,7 @@ if (fs.existsSync(dotenvPath)) {
 
 const mongoose = require('mongoose');
 const argon2 = require('argon2');
+const crypto = require('crypto');
 
 function parseArgs() {
   const args = {};
@@ -122,7 +123,36 @@ async function main() {
     return;
   }
 
-  console.error('Unknown subcommand. Use: list | set-email | set-password | ping');
+  // Mint a server-to-server transfer token (prints the plaintext to STDOUT).
+  // The collection name MUST equal TRANSFER_TOKEN_COLLECTION in models/TransferToken.ts.
+  if (sub === 'mint-transfer-token') {
+    const hours = Number(args.hours || 24);
+    const label = args.label || 'cli';
+    await connect();
+    const plain = 'fmt_' + crypto.randomBytes(32).toString('base64url');
+    const tokenHash = crypto.createHash('sha256').update(plain).digest('hex'); // matches lib/crypto sha256()
+    const coll = mongoose.connection.collection('transfertokens');
+    const expiresAt = new Date(Date.now() + hours * 3600 * 1000);
+    const now = new Date();
+    const r = await coll.insertOne({
+      tokenHash,
+      scope: { kind: 'instance', vendorId: null, bucketIds: [] },
+      status: 'active',
+      label,
+      expiresAt,
+      lastUsedAt: null,
+      createdBy: null,
+      createdAt: now,
+      updatedAt: now
+    });
+    const check = await coll.findOne({ _id: r.insertedId });
+    if (!check) { console.error('FAILED: token not found after insert (collection mismatch).'); process.exit(1); }
+    console.log(plain);
+    console.error(`(transfer token valid ${hours}h — expires ${expiresAt.toISOString()})`);
+    return;
+  }
+
+  console.error('Unknown subcommand. Use: list | set-email | set-password | ping | ping-uri | mint-transfer-token');
   process.exit(2);
 }
 

@@ -1,5 +1,6 @@
 import { S3Client, ListObjectsV2Command, GetObjectCommand } from '@aws-sdk/client-s3';
-import { Readable } from 'stream';
+import { Readable, Transform } from 'stream';
+import crypto from 'crypto';
 import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { dbConnect } from './db';
@@ -241,6 +242,261 @@ export async function runMigration(jobId: string): Promise<void> {
     job.finishedAt = new Date();
     setStep(job, 'copy', 'failed');
     log(job, 'error', `Migration failed: ${msg(e)}`);
+    await job.save();
+  }
+}
+
+// ===========================================================================
+// bcdnp -> bcdnp streaming transfer (pull from another file-manager install)
+// ===========================================================================
+
+function normBase(u: string): string {
+  return u.replace(/\/+$/, '');
+}
+
+export async function testBcdnp(baseUrl: string, token: string): Promise<{ ok: boolean; message: string }> {
+  try {
+    const r = await fetch(`${normBase(baseUrl)}/api/v1/transfer/manifest?limit=1`, {
+      headers: { authorization: `Bearer ${token}` },
+      redirect: 'manual'
+    });
+    if (r.status !== 200) return { ok: false, message: `source responded ${r.status} (bad URL or token?)` };
+    await r.json().catch(() => null);
+    return { ok: true, message: 'Connected to source instance.' };
+  } catch (e) {
+    return { ok: false, message: msg(e) };
+  }
+}
+
+export async function discoverBcdnp(
+  baseUrl: string,
+  token: string
+): Promise<{ ok: boolean; objects: number; bytes: number; message?: string }> {
+  try {
+    const r = await fetch(`${normBase(baseUrl)}/api/v1/transfer/manifest?limit=1`, {
+      headers: { authorization: `Bearer ${token}` },
+      redirect: 'manual'
+    });
+    if (r.status !== 200) return { ok: false, objects: 0, bytes: 0, message: `source responded ${r.status}` };
+    const j: any = await r.json();
+    return { ok: true, objects: j?.summary?.objects || 0, bytes: j?.summary?.bytes || 0 };
+  } catch (e) {
+    return { ok: false, objects: 0, bytes: 0, message: msg(e) };
+  }
+}
+
+interface ManifestEntry {
+  id: string;
+  bucketName: string;
+  folderPath: string;
+  originalName: string;
+  sizeBytes: number;
+  mimeType: string;
+  sha256: string;
+}
+
+async function fetchManifestAll(baseUrl: string, token: string): Promise<ManifestEntry[]> {
+  const out: ManifestEntry[] = [];
+  let after: string | null = null;
+  do {
+    const url = `${normBase(baseUrl)}/api/v1/transfer/manifest?limit=1000${after ? `&after=${after}` : ''}`;
+    const r = await fetch(url, { headers: { authorization: `Bearer ${token}` }, redirect: 'manual' });
+    if (r.status !== 200) throw new Error(`manifest fetch failed (${r.status})`);
+    const j: any = await r.json();
+    for (const f of j.files || []) out.push(f);
+    after = j.nextAfter || null;
+    if (out.length > 500_000) break;
+  } while (after);
+  return out;
+}
+
+async function ensureBucketByName(
+  vendorId: string,
+  name: string,
+  cache: Map<string, string>,
+  createdBy: any
+): Promise<string> {
+  const cached = cache.get(name);
+  if (cached) return cached;
+  let bucket = await Bucket.findOne({ vendorId, name });
+  if (!bucket) bucket = await Bucket.create({ vendorId, name, createdBy });
+  cache.set(name, String(bucket._id));
+  return String(bucket._id);
+}
+
+export async function runBcdnpTransfer(jobId: string): Promise<void> {
+  await dbConnect();
+
+  // Atomic claim: take a pending job, OR reclaim a 'running' job whose heartbeat
+  // is stale (previous runner died). Prevents two runners racing.
+  const claimed: any = await Migration.findOneAndUpdate(
+    {
+      _id: jobId,
+      $or: [{ status: 'pending' }, { status: 'running', heartbeatAt: { $lt: new Date(Date.now() - 120_000) } }]
+    },
+    { $set: { status: 'running', heartbeatAt: new Date() } },
+    { new: true }
+  );
+  if (!claimed) return;
+  const job: any = claimed;
+  if (!job.startedAt) job.startedAt = new Date();
+
+  setStep(job, 'connect', 'running');
+  await job.save();
+
+  try {
+    const baseUrl = job.bcdnp.baseUrl;
+    const token = decryptSecret(job.bcdnp.tokenEnc);
+    const vendorId = String(job.targetVendorId);
+    await storage.ensureBucket();
+
+    // Drop placeholder rows from a prior interrupted run (no object written).
+    await FileModel.deleteMany({ status: 'uploading', 'metadata.transferJobId': jobId });
+
+    setStep(job, 'connect', 'completed');
+    setStep(job, 'list', 'running');
+    log(job, 'info', 'Fetching manifest from source…');
+    await job.save();
+
+    const manifest = await fetchManifestAll(baseUrl, token);
+    job.totals.objects = manifest.length;
+    job.totals.bytes = manifest.reduce((a, m) => a + (m.sizeBytes || 0), 0);
+    setStep(job, 'list', 'completed', `${manifest.length} files`);
+    setStep(job, 'copy', 'running');
+    log(job, 'info', `Manifest: ${manifest.length} files, ${(job.totals.bytes / 1048576).toFixed(0)} MB.`);
+    await job.save();
+
+    const bucketCache = new Map<string, string>();
+    const folderCache = new Map<string, string>();
+    const startedMs = job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
+    let i = 0;
+
+    for (const entry of manifest) {
+      i++;
+
+      if (i % 10 === 0) {
+        const fresh: any = await Migration.findById(jobId).select('status').lean();
+        if (fresh?.status === 'cancelled') {
+          setStep(job, 'copy', 'failed', 'cancelled');
+          log(job, 'warn', 'Cancelled by admin.');
+          await Migration.updateOne({ _id: jobId }, { $set: { finishedAt: new Date() } });
+          return;
+        }
+      }
+
+      const bucketId = await ensureBucketByName(vendorId, entry.bucketName || 'imported', bucketCache, job.createdBy);
+
+      const existing = await FileModel.findOne({ vendorId, 'metadata.sourceFileId': entry.id, status: 'ready' })
+        .select('_id')
+        .lean();
+      if (existing) {
+        job.done.skipped++;
+      } else {
+        let file: any = null;
+        try {
+          const folderId = await ensureFolderPath(vendorId, bucketId, entry.folderPath || '', folderCache, job.createdBy);
+          file = await FileModel.create({
+            vendorId,
+            bucketId,
+            folderId,
+            originalName: entry.originalName,
+            storageKey: `migrating-${new mongoose.Types.ObjectId()}`,
+            extension: (entry.originalName.split('.').pop() || '').toLowerCase(),
+            mimeType: entry.mimeType || 'application/octet-stream',
+            sizeBytes: 0,
+            status: 'uploading',
+            uploadSource: 'api',
+            metadata: { sourceFileId: entry.id, transferJobId: jobId }
+          });
+
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
+          let counted = 0;
+          const hash = crypto.createHash('sha256');
+          try {
+            const resp = await fetch(`${normBase(baseUrl)}/api/v1/transfer/file/${entry.id}/stream`, {
+              headers: { authorization: `Bearer ${token}` },
+              redirect: 'manual',
+              signal: ctrl.signal
+            });
+            if (resp.status !== 200 || !resp.body) throw new Error(`stream ${resp.status}`);
+            const enc = (resp.headers.get('content-encoding') || 'identity').toLowerCase();
+            if (enc !== 'identity') throw new Error(`unexpected content-encoding ${enc}`);
+
+            const srcStream = Readable.fromWeb(resp.body as any);
+            const counter = new Transform({
+              transform(chunk, _e, cb) {
+                counted += chunk.length;
+                hash.update(chunk);
+                cb(null, chunk);
+              }
+            });
+            srcStream.on('error', (e) => counter.destroy(e));
+            srcStream.pipe(counter);
+
+            const mime = entry.mimeType || (mimeLookup(entry.originalName) as string) || 'application/octet-stream';
+            const key = objectKey(vendorId, bucketId, String(file._id), entry.originalName);
+            await storage.putObjectStream(key, counter, entry.sizeBytes, { mimeType: mime });
+
+            if (counted !== entry.sizeBytes) throw new Error(`size mismatch ${counted} != ${entry.sizeBytes}`);
+            const digest = hash.digest('hex');
+            if (entry.sha256 && /^[a-f0-9]{64}$/i.test(entry.sha256) && digest !== entry.sha256.toLowerCase()) {
+              throw new Error('sha256 mismatch');
+            }
+
+            file.storageKey = key;
+            file.sizeBytes = entry.sizeBytes;
+            file.mimeType = mime;
+            file.checksum = { sha256: digest, md5: '' };
+            file.status = 'ready';
+            await file.save();
+            job.done.objects++;
+            job.done.bytes += entry.sizeBytes;
+          } finally {
+            clearTimeout(timer);
+          }
+        } catch (e) {
+          job.done.failed++;
+          log(job, 'error', `Failed ${entry.bucketName}/${entry.originalName}: ${msg(e)}`);
+          if (file) await FileModel.deleteOne({ _id: file._id, status: 'uploading' }).catch(() => {});
+        }
+      }
+
+      const elapsed = (Date.now() - startedMs) / 1000;
+      const bps = elapsed > 0 ? job.done.bytes / elapsed : 0;
+      job.currentItem = `${i}/${manifest.length} · ${entry.bucketName}/${entry.originalName}`;
+      job.progress = Math.round((i / Math.max(1, manifest.length)) * 100);
+      job.heartbeatAt = new Date();
+      if (i % 3 === 0 || i === manifest.length) {
+        (job as any).throughputMbps = bps > 0 ? +(bps / 1048576).toFixed(2) : 0;
+        await job.save();
+      }
+    }
+
+    for (const bId of bucketCache.values()) {
+      const agg = await FileModel.aggregate([
+        { $match: { bucketId: new mongoose.Types.ObjectId(bId), status: 'ready' } },
+        { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
+      ]);
+      await Bucket.updateOne({ _id: bId }, { $set: { storageBytes: agg[0]?.bytes || 0, fileCount: agg[0]?.count || 0 } });
+    }
+    await Vendor.updateOne(
+      { _id: vendorId },
+      { $inc: { 'usage.storageBytes': job.done.bytes, 'usage.fileCount': job.done.objects } }
+    );
+
+    setStep(job, 'copy', 'completed', `${job.done.objects} copied · ${job.done.skipped} skipped · ${job.done.failed} failed`);
+    job.status = 'completed';
+    job.progress = 100;
+    job.finishedAt = new Date();
+    log(job, 'info', 'Transfer complete.');
+    await job.save();
+  } catch (e) {
+    job.status = 'failed';
+    job.error = msg(e);
+    job.finishedAt = new Date();
+    setStep(job, 'copy', 'failed');
+    log(job, 'error', `Transfer failed: ${msg(e)}`);
     await job.save();
   }
 }

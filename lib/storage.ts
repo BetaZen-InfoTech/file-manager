@@ -4,6 +4,7 @@ import {
   GetObjectCommand,
   DeleteObjectCommand,
   HeadBucketCommand,
+  HeadObjectCommand,
   CreateBucketCommand,
   CreateMultipartUploadCommand,
   UploadPartCommand,
@@ -23,6 +24,12 @@ export interface StorageDriver {
   driver: string;
   ensureBucket(): Promise<void>;
   putObject(key: string, body: Buffer | Uint8Array, meta: { mimeType: string }): Promise<PutResult>;
+  putObjectStream(
+    key: string,
+    body: Readable,
+    contentLength: number,
+    meta: { mimeType: string }
+  ): Promise<PutResult>;
   getObject(key: string): Promise<{ stream: Readable; contentLength?: number; contentType?: string }>;
   deleteObject(key: string): Promise<void>;
   presignedGet(key: string, expirySeconds: number, fileName?: string): Promise<string>;
@@ -44,8 +51,16 @@ function makeS3(): { client: S3Client; bucket: string } {
       accessKeyId: env.S3_ACCESS_KEY,
       secretAccessKey: env.S3_SECRET_KEY
     },
-    forcePathStyle: env.S3_FORCE_PATH_STYLE
-  });
+    forcePathStyle: env.S3_FORCE_PATH_STYLE,
+    // CRITICAL for putObjectStream: newer AWS SDK v3 defaults to computing a
+    // request checksum, which forces a streamed Readable body into an
+    // `aws-chunked` / STREAMING-UNSIGNED-PAYLOAD-TRAILER encoding that DROPS
+    // Content-Length — MinIO rejects that. WHEN_REQUIRED skips it so a raw
+    // Readable streams with a literal Content-Length. (Buffer puts are
+    // unaffected.) Unknown keys are ignored by older SDKs, so this is safe.
+    requestChecksumCalculation: 'WHEN_REQUIRED',
+    responseChecksumValidation: 'WHEN_REQUIRED'
+  } as any);
   return { client, bucket: env.S3_DEFAULT_BUCKET };
 }
 
@@ -79,6 +94,25 @@ export const storage: StorageDriver = {
       })
     );
     return { etag: res.ETag || '', size: body.byteLength };
+  },
+
+  // Stream an object in with a KNOWN content length (no buffering, no temp
+  // file). Used by server-to-server transfer. Verifies the stored size after.
+  async putObjectStream(key, body, contentLength, meta) {
+    await s3.client.send(
+      new PutObjectCommand({
+        Bucket: s3.bucket,
+        Key: key,
+        Body: body,
+        ContentLength: contentLength,
+        ContentType: meta.mimeType
+      })
+    );
+    const head = await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
+    if (typeof head.ContentLength === 'number' && head.ContentLength !== contentLength) {
+      throw new Error(`stored size ${head.ContentLength} != expected ${contentLength}`);
+    }
+    return { etag: head.ETag || '', size: contentLength };
   },
 
   async getObject(key) {

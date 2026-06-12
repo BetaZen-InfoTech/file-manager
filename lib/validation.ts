@@ -198,17 +198,48 @@ const migrationSourceSchema = z.object({
   forcePathStyle: z.boolean().optional()
 });
 
-export const migrationActionSchema = z.object({
-  action: z.enum(['test', 'discover', 'start']),
-  source: migrationSourceSchema,
-  targetVendorId: z.string().min(1).max(64).optional(),
-  targetBucketName: z
-    .string()
-    .min(1)
-    .max(120)
-    .regex(/^[a-zA-Z0-9._-]+$/, 'letters, digits, . _ - only')
-    .optional()
+const migrationBcdnpSchema = z.object({
+  baseUrl: z.string().url().max(300),
+  token: z.string().min(8).max(400)
 });
+
+export const transferTokenSchema = z.object({
+  action: z.enum(['create', 'revoke']).default('create'),
+  hours: z.number().int().min(1).max(24 * 60).optional(),
+  label: z.string().max(120).optional(),
+  vendorId: z.string().max(64).optional(),
+  id: z.string().max(64).optional()
+});
+
+export const migrationActionSchema = z
+  .object({
+    action: z.enum(['test', 'discover', 'start', 'resume', 'cancel']),
+    sourceType: z.enum(['s3', 'bcdnp']).optional(),
+    source: migrationSourceSchema.optional(),
+    bcdnp: migrationBcdnpSchema.optional(),
+    id: z.string().min(1).max(64).optional(),
+    targetVendorId: z.string().min(1).max(64).optional(),
+    targetBucketName: z
+      .string()
+      .min(1)
+      .max(120)
+      .regex(/^[a-zA-Z0-9._-]+$/, 'letters, digits, . _ - only')
+      .optional()
+  })
+  .superRefine((v, ctx) => {
+    const st = v.sourceType || 's3';
+    const needsSource = v.action === 'test' || v.action === 'discover' || v.action === 'start';
+    if (needsSource) {
+      if (st === 's3' && !v.source) ctx.addIssue({ code: 'custom', message: 'source is required for s3' });
+      if (st === 'bcdnp' && !v.bcdnp) ctx.addIssue({ code: 'custom', message: 'bcdnp (baseUrl, token) is required' });
+    }
+    if (v.action === 'start' && (!v.targetVendorId || !v.targetBucketName)) {
+      ctx.addIssue({ code: 'custom', message: 'targetVendorId and targetBucketName are required to start' });
+    }
+    if ((v.action === 'resume' || v.action === 'cancel') && !v.id) {
+      ctx.addIssue({ code: 'custom', message: 'id is required' });
+    }
+  });
 
 export const databaseUpdateSchema = z.object({
   // 'test' just probes the URI; 'apply' writes it to .env and reloads.

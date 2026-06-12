@@ -15,11 +15,12 @@ export default async function MigrationPage() {
   return (
     <div className="mx-auto max-w-3xl space-y-5">
       <div>
-        <h1 className="text-2xl font-semibold text-white">Migrate files from another server</h1>
+        <h1 className="text-2xl font-semibold text-white">Server transfer &amp; migration</h1>
         <p className="mt-1 text-sm text-gray-400">
-          Import all files &amp; folders from another server&apos;s <strong>S3-compatible storage</strong>
-          (MinIO, AWS S3, DigitalOcean Spaces, a backup bucket…) into a vendor here. Folder structure
-          is rebuilt from the object keys.
+          Move files &amp; folders here from <strong>another bcdnp server</strong> (mint a transfer token
+          there, enter its URL + token below) or from any <strong>S3-compatible storage</strong>. Files
+          stream directly — <strong>no zip, no extra disk</strong> — and the job keeps running on the
+          server even if you close the browser.
         </p>
       </div>
       <MigrationClient vendors={vendors} />
