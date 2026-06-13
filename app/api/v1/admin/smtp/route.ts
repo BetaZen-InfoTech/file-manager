@@ -36,16 +36,21 @@ export async function POST(req: NextRequest) {
     }
     let sent: { ok: boolean; reason?: string } = { ok: true };
     if (testTo) {
-      sent = await sendMail({
-        to: testTo,
-        subject: 'BetaZen CDN — SMTP test email',
-        html: '<p>✅ Your SMTP settings are working. This is a test email from the BetaZen CDN admin panel.</p>',
-        text: 'Your SMTP settings are working. This is a test email from the BetaZen CDN admin panel.'
-      });
+      sent = await sendMail(
+        {
+          to: testTo,
+          subject: 'BetaZen CDN — SMTP test email',
+          html: '<p>✅ Your SMTP settings are working. This is a test email from the BetaZen CDN admin panel.</p>',
+          text: 'Your SMTP settings are working. This is a test email from the BetaZen CDN admin panel.'
+        },
+        { force: true } // test regardless of the enabled toggle
+      );
     }
     await audit(p, req, { action: 'smtp.test', resourceType: 'platform_setting', meta: { ok: sent.ok, testTo: testTo || null } });
     if (!sent.ok) return badRequest(`Connected, but sending failed: ${sent.reason}`);
-    return jsonOk({ ...config, tested: true, sentTo: testTo || null });
+    // The test passed → turn sending on so it's live without a second click.
+    const live = await setSmtpConfig({ enabled: true }, p.userId || null);
+    return jsonOk({ ...live, tested: true, sentTo: testTo || null });
   }
 
   await audit(p, req, { action: 'smtp.config.update', resourceType: 'platform_setting' });

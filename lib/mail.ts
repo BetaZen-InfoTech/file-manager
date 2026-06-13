@@ -10,9 +10,11 @@ function buildFrom(cfg: SmtpConfig): string {
   return cfg.fromName ? `"${cfg.fromName.replace(/"/g, '')}" <${cfg.fromEmail}>` : cfg.fromEmail;
 }
 
-async function getMailer(): Promise<{ transporter: Transporter; from: string } | null> {
+async function getMailer(ignoreEnabled = false): Promise<{ transporter: Transporter; from: string } | null> {
   const cfg = await getSmtpConfig();
-  if (!cfg.enabled || !cfg.host) return null;
+  // `ignoreEnabled` lets the admin "test" verify/send before flipping sending on.
+  if (!cfg.host) return null;
+  if (!ignoreEnabled && !cfg.enabled) return null;
   const sig = JSON.stringify([cfg.host, cfg.port, cfg.encryption, cfg.user, cfg.pass, cfg.fromName, cfg.fromEmail]);
   if (cached && cached.sig === sig) return { transporter: cached.transporter, from: cached.from };
   // Map the encryption mode to nodemailer transport options:
@@ -40,9 +42,13 @@ export interface MailInput {
   text?: string;
 }
 
-export async function sendMail(input: MailInput): Promise<{ ok: boolean; reason?: string }> {
-  const m = await getMailer();
-  if (!m) return { ok: false, reason: 'mail not configured' };
+export async function sendMail(
+  input: MailInput,
+  opts: { force?: boolean } = {}
+): Promise<{ ok: boolean; reason?: string }> {
+  // force = send even when sending is toggled off (used by the admin test).
+  const m = await getMailer(!!opts.force);
+  if (!m) return { ok: false, reason: 'set an SMTP host first' };
   try {
     await m.transporter.sendMail({
       from: m.from || undefined,
@@ -58,10 +64,10 @@ export async function sendMail(input: MailInput): Promise<{ ok: boolean; reason?
   }
 }
 
-/** Verify SMTP connectivity for the admin "test" action without sending. */
+/** Verify SMTP connectivity for the admin "test" action (regardless of the enabled toggle). */
 export async function verifyMailer(): Promise<{ ok: boolean; reason?: string }> {
-  const m = await getMailer();
-  if (!m) return { ok: false, reason: 'mail not configured' };
+  const m = await getMailer(true);
+  if (!m) return { ok: false, reason: 'set an SMTP host first' };
   try {
     await m.transporter.verify();
     return { ok: true };
