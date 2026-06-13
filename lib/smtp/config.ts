@@ -3,15 +3,25 @@ import { PlatformSettings } from '@/models/PlatformSettings';
 import { encryptSecret, decryptSecret } from '../crypto';
 import { env } from '../env';
 
+export type SmtpEncryption = 'none' | 'starttls' | 'tls';
+
 export interface SmtpConfig {
   enabled: boolean;
   host: string;
   port: number;
-  secure: boolean; // TLS on connect (port 465)
+  encryption: SmtpEncryption; // none = plaintext, starttls = upgrade (587), tls = implicit SMTPS (465)
   user: string;
   pass: string;
   fromName: string;
   fromEmail: string;
+}
+
+// Map a stored doc to an encryption mode, tolerating the older `secure` boolean.
+function deriveEncryption(v: any, port: number): SmtpEncryption {
+  if (v?.encryption === 'none' || v?.encryption === 'starttls' || v?.encryption === 'tls') return v.encryption;
+  if (v?.secure === true) return 'tls';
+  if (v?.secure === false) return 'starttls';
+  return port === 465 ? 'tls' : 'starttls';
 }
 
 function envFallback(): SmtpConfig {
@@ -23,7 +33,7 @@ function envFallback(): SmtpConfig {
     enabled: Boolean(env.MAIL_HOST) && env.MAIL_DRIVER !== 'noop',
     host: env.MAIL_HOST || '',
     port: env.MAIL_PORT || 587,
-    secure: env.MAIL_PORT === 465,
+    encryption: env.MAIL_PORT === 465 ? 'tls' : 'starttls',
     user: env.MAIL_USER || '',
     pass: env.MAIL_PASS || '',
     fromName: match ? match[1].replace(/^"|"$/g, '').trim() : '',
@@ -38,11 +48,12 @@ export async function getSmtpConfig(): Promise<SmtpConfig> {
   if (!doc?.value) return envFallback();
   const v = doc.value as any;
   const fb = envFallback();
+  const port = Number(v.port || fb.port || 587);
   return {
     enabled: Boolean(v.enabled),
     host: String(v.host || fb.host),
-    port: Number(v.port || fb.port || 587),
-    secure: v.secure != null ? Boolean(v.secure) : Number(v.port) === 465,
+    port,
+    encryption: deriveEncryption(v, port),
     user: String(v.user || ''),
     pass: decryptSecret(String(v.pass || '')),
     fromName: String(v.fromName || ''),
@@ -57,7 +68,7 @@ export async function getPublicSmtpConfig() {
     enabled: c.enabled,
     host: c.host,
     port: c.port,
-    secure: c.secure,
+    encryption: c.encryption,
     user: c.user,
     passSet: !!c.pass,
     fromName: c.fromName,
@@ -69,7 +80,7 @@ export interface SmtpConfigPatch {
   enabled?: boolean;
   host?: string;
   port?: number;
-  secure?: boolean;
+  encryption?: SmtpEncryption;
   user?: string;
   pass?: string;
   fromName?: string;
@@ -84,13 +95,14 @@ export async function setSmtpConfig(patch: SmtpConfigPatch, updatedBy: string | 
     enabled: patch.enabled ?? current.enabled,
     host: patch.host ?? current.host,
     port: patch.port ?? current.port,
-    secure: patch.secure ?? current.secure,
+    encryption: patch.encryption ?? current.encryption,
     user: patch.user ?? current.user,
     pass: patch.pass ? patch.pass : current.pass,
     fromName: patch.fromName ?? current.fromName,
     fromEmail: patch.fromEmail ?? current.fromEmail
   };
-  const store = { ...next, pass: encryptSecret(next.pass) };
+  // Persist `secure` too (derived) so any older reader stays consistent.
+  const store = { ...next, secure: next.encryption === 'tls', pass: encryptSecret(next.pass) };
   await PlatformSettings.findOneAndUpdate(
     { key: 'smtp' },
     { $set: { value: store, updatedBy } },

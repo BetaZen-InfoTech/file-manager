@@ -162,7 +162,8 @@ export const smtpConfigSchema = z.object({
   enabled: z.boolean().optional(),
   host: z.string().max(255).optional(),
   port: z.number().int().min(1).max(65535).optional(),
-  secure: z.boolean().optional(),
+  encryption: z.enum(['none', 'starttls', 'tls']).optional(),
+  secure: z.boolean().optional(), // legacy — superseded by `encryption`
   user: z.string().max(255).optional(),
   pass: z.string().max(400).optional(),
   fromName: z.string().max(120).optional(),

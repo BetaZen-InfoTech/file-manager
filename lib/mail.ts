@@ -13,14 +13,21 @@ function buildFrom(cfg: SmtpConfig): string {
 async function getMailer(): Promise<{ transporter: Transporter; from: string } | null> {
   const cfg = await getSmtpConfig();
   if (!cfg.enabled || !cfg.host) return null;
-  const sig = JSON.stringify([cfg.host, cfg.port, cfg.secure, cfg.user, cfg.pass, cfg.fromName, cfg.fromEmail]);
+  const sig = JSON.stringify([cfg.host, cfg.port, cfg.encryption, cfg.user, cfg.pass, cfg.fromName, cfg.fromEmail]);
   if (cached && cached.sig === sig) return { transporter: cached.transporter, from: cached.from };
-  const transporter = nodemailer.createTransport({
+  // Map the encryption mode to nodemailer transport options:
+  //   tls      → implicit TLS on connect (SMTPS, port 465)
+  //   starttls → plain connect, then require STARTTLS upgrade (port 587)
+  //   none     → no TLS at all (plaintext — dev/relay only)
+  const opts: Record<string, unknown> = {
     host: cfg.host,
     port: cfg.port,
-    secure: cfg.secure,
+    secure: cfg.encryption === 'tls',
     auth: cfg.user ? { user: cfg.user, pass: cfg.pass } : undefined
-  });
+  };
+  if (cfg.encryption === 'starttls') opts.requireTLS = true;
+  if (cfg.encryption === 'none') opts.ignoreTLS = true;
+  const transporter = nodemailer.createTransport(opts as any);
   const from = buildFrom(cfg);
   cached = { sig, transporter, from };
   return { transporter, from };

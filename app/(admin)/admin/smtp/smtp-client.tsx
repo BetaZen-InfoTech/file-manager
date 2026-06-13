@@ -2,24 +2,33 @@
 
 import { useEffect, useState } from 'react';
 
+type Encryption = 'none' | 'starttls' | 'tls';
+
 interface Cfg {
   enabled: boolean;
   host: string;
   port: number;
-  secure: boolean;
+  encryption: Encryption;
   user: string;
   passSet: boolean;
   fromName: string;
   fromEmail: string;
 }
 
-const PRESETS: Record<string, { host: string; port: number; secure: boolean }> = {
-  Gmail: { host: 'smtp.gmail.com', port: 465, secure: true },
-  'Brevo (Sendinblue)': { host: 'smtp-relay.brevo.com', port: 587, secure: false },
-  Mailgun: { host: 'smtp.mailgun.org', port: 587, secure: false },
-  SendGrid: { host: 'smtp.sendgrid.net', port: 587, secure: false },
-  'Amazon SES': { host: 'email-smtp.us-east-1.amazonaws.com', port: 587, secure: false },
-  Zoho: { host: 'smtp.zoho.com', port: 465, secure: true }
+const ENCRYPTION_OPTIONS: { value: Encryption; label: string; port: number }[] = [
+  { value: 'starttls', label: 'STARTTLS (upgrade on port 587)', port: 587 },
+  { value: 'tls', label: 'TLS / SMTPS (implicit TLS on port 465)', port: 465 },
+  { value: 'none', label: 'None (plaintext — dev only)', port: 25 }
+];
+const KNOWN_PORTS = new Set([25, 465, 587]);
+
+const PRESETS: Record<string, { host: string; port: number; encryption: Encryption }> = {
+  Gmail: { host: 'smtp.gmail.com', port: 465, encryption: 'tls' },
+  'Brevo (Sendinblue)': { host: 'smtp-relay.brevo.com', port: 587, encryption: 'starttls' },
+  Mailgun: { host: 'smtp.mailgun.org', port: 587, encryption: 'starttls' },
+  SendGrid: { host: 'smtp.sendgrid.net', port: 587, encryption: 'starttls' },
+  'Amazon SES': { host: 'email-smtp.us-east-1.amazonaws.com', port: 587, encryption: 'starttls' },
+  Zoho: { host: 'smtp.zoho.com', port: 465, encryption: 'tls' }
 };
 
 export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
@@ -32,15 +41,18 @@ export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
   useEffect(() => {
     fetch('/api/v1/admin/smtp')
       .then((r) => r.json())
-      .then((d) => {
-        setCfg(d);
-        setTestTo((t) => t);
-      })
+      .then((d) => setCfg(d))
       .catch(() => setMsg({ kind: 'err', text: 'Could not load settings' }));
   }, []);
 
   function patch(p: Partial<Cfg>) {
     setCfg((c) => (c ? { ...c, ...p } : c));
+  }
+
+  // Switching encryption suggests the conventional port (unless a custom one is set).
+  function setEncryption(encryption: Encryption) {
+    const opt = ENCRYPTION_OPTIONS.find((o) => o.value === encryption)!;
+    setCfg((c) => (c ? { ...c, encryption, port: !c.port || KNOWN_PORTS.has(c.port) ? opt.port : c.port } : c));
   }
 
   async function submit(action: 'save' | 'test') {
@@ -52,7 +64,7 @@ export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
       enabled: cfg.enabled,
       host: cfg.host,
       port: Number(cfg.port),
-      secure: cfg.secure,
+      encryption: cfg.encryption,
       user: cfg.user,
       fromName: cfg.fromName,
       fromEmail: cfg.fromEmail
@@ -84,22 +96,34 @@ export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
   }
 
   if (!cfg) return <div className="card text-sm text-gray-500">Loading…</div>;
+  const configured = cfg.enabled && !!cfg.host && (cfg.passSet || !cfg.user);
 
   return (
     <div className="max-w-2xl space-y-4">
       <div className="card space-y-4">
-        <label className="flex items-center justify-between">
+        {/* header */}
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-semibold text-white">
+              <span>📧</span> Outgoing Mail (SMTP)
+            </div>
+            <p className="mt-1 text-xs leading-relaxed text-gray-500">
+              Used for password resets, account recovery, and notification emails. The panel reads these
+              settings every time it sends — changes take effect immediately, no restart needed. The SMTP
+              password is <span className="text-gray-400">encrypted at rest</span>.
+            </p>
+          </div>
+          <span className={`shrink-0 rounded-full px-2.5 py-0.5 text-[11px] font-medium ${configured ? 'bg-emerald-500/15 text-emerald-300' : 'bg-[#1c1c20] text-gray-400'}`}>
+            {configured ? '✓ Configured' : 'Not configured'}
+          </span>
+        </div>
+
+        <label className="flex items-center justify-between border-t border-border pt-3">
           <div>
             <div className="text-sm font-medium text-white">Enable email sending</div>
             <div className="text-xs text-gray-500">When off, emails are silently skipped.</div>
           </div>
-          <input
-            type="checkbox"
-            checked={cfg.enabled}
-            disabled={!canEdit}
-            onChange={(e) => patch({ enabled: e.target.checked })}
-            className="h-5 w-5 accent-accent"
-          />
+          <input type="checkbox" checked={cfg.enabled} disabled={!canEdit} onChange={(e) => patch({ enabled: e.target.checked })} className="h-5 w-5 accent-accent" />
         </label>
 
         <div>
@@ -110,7 +134,7 @@ export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
                 key={name}
                 disabled={!canEdit}
                 className="rounded-md border border-border px-2.5 py-1 text-xs text-gray-300 hover:bg-[#1c1c20] disabled:opacity-50"
-                onClick={() => patch({ host: p.host, port: p.port, secure: p.secure })}
+                onClick={() => patch({ host: p.host, port: p.port, encryption: p.encryption })}
               >
                 {name}
               </button>
@@ -120,24 +144,32 @@ export default function SmtpClient({ canEdit }: { canEdit: boolean }) {
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
           <div className="sm:col-span-2">
-            <label className="mb-1 block text-xs font-medium text-gray-400">SMTP host</label>
+            <label className="mb-1 block text-xs font-medium text-gray-400">SMTP Host *</label>
             <input className="input" value={cfg.host} disabled={!canEdit} onChange={(e) => patch({ host: e.target.value })} placeholder="smtp.gmail.com" />
           </div>
           <div>
-            <label className="mb-1 block text-xs font-medium text-gray-400">Port</label>
+            <label className="mb-1 block text-xs font-medium text-gray-400">Port *</label>
             <input className="input" type="number" value={cfg.port} disabled={!canEdit} onChange={(e) => patch({ port: Number(e.target.value) })} placeholder="587" />
+            <p className="mt-1 text-[10px] text-gray-500">
+              Common: <span className="text-gray-400">587</span> (STARTTLS), <span className="text-gray-400">465</span> (TLS), <span className="text-gray-400">25</span> (plain)
+            </p>
           </div>
         </div>
 
-        <label className="flex items-center gap-2 text-xs text-gray-400">
-          <input type="checkbox" checked={cfg.secure} disabled={!canEdit} onChange={(e) => patch({ secure: e.target.checked })} />
-          Use TLS on connect (SSL) — enable for port 465; leave off for 587 (STARTTLS)
-        </label>
+        <div>
+          <label className="mb-1 block text-xs font-medium text-gray-400">Encryption *</label>
+          <select className="input" value={cfg.encryption} disabled={!canEdit} onChange={(e) => setEncryption(e.target.value as Encryption)}>
+            {ENCRYPTION_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-400">Username</label>
             <input className="input" value={cfg.user} disabled={!canEdit} onChange={(e) => patch({ user: e.target.value })} placeholder="apikey or user@domain" autoComplete="off" />
+            <p className="mt-1 text-[10px] text-gray-500">Leave blank for unauthenticated relays.</p>
           </div>
           <div>
             <label className="mb-1 block text-xs font-medium text-gray-400">
