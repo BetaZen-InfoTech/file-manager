@@ -181,6 +181,11 @@ export default function UploadModal({
     setBusy(false);
   }
 
+  // The exact directory uploads will be written to. For the admin file manager
+  // this is an absolute server path; for a vendor it's their jail-relative path.
+  const destDir = cwd && cwd.length ? cwd : '/';
+  const destReady = typeof cwd === 'string' && cwd.length > 0;
+
   const total = items.length;
   const done = items.filter((i) => i.status === 'done').length;
   const failed = items.filter((i) => i.status === 'error').length;
@@ -204,13 +209,33 @@ export default function UploadModal({
           <button className="btn-secondary px-4 py-2 text-sm" disabled={busy} onClick={() => { reset(); onClose(); }}>
             {done > 0 && !busy ? 'Done' : 'Cancel'}
           </button>
-          <button className="btn px-4 py-2 text-sm" disabled={busy || !items.some((i) => i.status === 'queued' || i.status === 'error')} onClick={startUpload}>
+          <button
+            className="btn px-4 py-2 text-sm"
+            disabled={busy || !destReady || !items.some((i) => i.status === 'queued' || i.status === 'error')}
+            onClick={startUpload}
+          >
             {busy ? `Uploading… ${overall}%` : `Upload ${items.filter((i) => i.status !== 'done').length || ''}`.trim()}
           </button>
         </>
       }
     >
       <div className="space-y-3">
+        {/* destination — exactly where these files/folders will be written */}
+        <div className="flex items-start gap-2 rounded-lg border border-border bg-[#141417] px-3 py-2 text-xs">
+          <span className="mt-0.5 shrink-0">📍</span>
+          <div className="min-w-0">
+            <div className="text-gray-500">Uploading to</div>
+            {destReady ? (
+              <div className="break-all font-mono text-gray-200">{destDir}</div>
+            ) : (
+              <div className="text-warning">Open a folder first — the destination isn&apos;t ready yet.</div>
+            )}
+            <div className="mt-0.5 text-[11px] text-gray-600">
+              Folders keep their structure; files land directly in this directory.
+            </div>
+          </div>
+        </div>
+
         {/* drop zone */}
         <div
           onDragOver={(e) => {

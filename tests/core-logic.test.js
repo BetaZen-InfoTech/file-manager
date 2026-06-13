@@ -504,3 +504,59 @@ test('[9] Audit-remediation invariants', async (t) => {
     assert.equal(fullPath(out.find((f) => f.id === 'C')), '/D/B/C');
   });
 });
+
+// -------------------- [10] Vendor username derivation --------------------
+// Mirrors lib/username.ts — auto username from a vendor name (only a-z0-9_) +
+// collision handling. Names the vendor's private server folder.
+const COMBINING_MARKS = new RegExp('[\\u0300-\\u036f]', 'g');
+function usernameFromName(name) {
+  const base = (name || '')
+    .normalize('NFKD')
+    .replace(COMBINING_MARKS, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return base || 'vendor';
+}
+function disambiguateUsername(base, taken) {
+  const used = new Set(taken);
+  if (!used.has(base)) return base;
+  let n = 2;
+  while (used.has(`${base}_${n}`)) n++;
+  return `${base}_${n}`;
+}
+
+test('[10] Vendor username (auto from name, only a-z0-9_)', async (t) => {
+  await t.test('spaces & case -> lowercase underscores', () => {
+    assert.equal(usernameFromName('BetaZen InfoTech'), 'betazen_infotech');
+  });
+  await t.test('punctuation collapses to a single underscore', () => {
+    assert.equal(usernameFromName('Hello---World!!!'), 'hello_world');
+  });
+  await t.test('leading/trailing separators are trimmed', () => {
+    assert.equal(usernameFromName('  __Acme.. '), 'acme');
+  });
+  await t.test('digits are preserved', () => {
+    assert.equal(usernameFromName('Cloud 9 Media'), 'cloud_9_media');
+  });
+  await t.test('accents fold to ascii', () => {
+    assert.equal(usernameFromName('Café Déjà'), 'cafe_deja');
+  });
+  await t.test('output only ever contains a-z0-9_', () => {
+    for (const s of ['ABC!@#', 'naïve—dash', '9 lives', '   ', '...']) {
+      assert.ok(/^[a-z0-9_]+$/.test(usernameFromName(s)), `bad chars in "${usernameFromName(s)}"`);
+    }
+  });
+  await t.test('empty / all-symbol name falls back to "vendor"', () => {
+    assert.equal(usernameFromName('***'), 'vendor');
+    assert.equal(usernameFromName(''), 'vendor');
+  });
+  await t.test('unique base returned unchanged', () => {
+    assert.equal(disambiguateUsername('acme', ['other']), 'acme');
+  });
+  await t.test('collision appends _2, then _3', () => {
+    assert.equal(disambiguateUsername('acme', ['acme']), 'acme_2');
+    assert.equal(disambiguateUsername('acme', ['acme', 'acme_2']), 'acme_3');
+  });
+});

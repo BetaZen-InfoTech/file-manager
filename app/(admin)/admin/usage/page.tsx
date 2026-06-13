@@ -1,7 +1,7 @@
 import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { realUsageByVendor, fmtBytes } from '@/lib/vendor-stats';
-import { vendorDiskUsage } from '@/lib/server-fs';
+import { vendorDiskUsage, vendorFolderKey } from '@/lib/server-fs';
 import SyncUsageButton from '@/components/SyncUsageButton';
 
 export const dynamic = 'force-dynamic';
@@ -13,7 +13,7 @@ export default async function UsagePage() {
     realUsageByVendor()
   ]);
   // Measure each vendor's file-manager disk folder (separate from billed storage).
-  const disks = await Promise.all(vendors.map((v: any) => vendorDiskUsage(String(v._id))));
+  const disks = await Promise.all(vendors.map((v: any) => vendorDiskUsage(vendorFolderKey(v))));
   const diskMap = new Map(vendors.map((v: any, i) => [String(v._id), disks[i]]));
   // Sort by real storage used, descending.
   const rows = vendors

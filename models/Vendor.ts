@@ -4,6 +4,10 @@ const VendorSchema = new Schema(
   {
     name: { type: String, required: true },
     slug: { type: String, required: true, unique: true, index: true },
+    // Folder-safe handle ([a-z0-9_]) auto-derived from the name on create. Names
+    // the vendor's private server folder (/var/www/vendors/<username>). Optional
+    // so legacy vendors (created before usernames) keep working via the id.
+    username: { type: String, default: null, lowercase: true, trim: true },
     status: {
       type: String,
       enum: ['active', 'suspended', 'pending'],
@@ -40,6 +44,12 @@ const VendorSchema = new Schema(
     contactEmail: { type: String, default: null }
   },
   { timestamps: true }
+);
+
+// Unique only among vendors that actually have a username (legacy nulls excluded).
+VendorSchema.index(
+  { username: 1 },
+  { unique: true, partialFilterExpression: { username: { $type: 'string' } } }
 );
 
 export type VendorDoc = InferSchemaType<typeof VendorSchema> & { _id: mongoose.Types.ObjectId };

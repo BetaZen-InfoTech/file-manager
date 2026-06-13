@@ -2,10 +2,13 @@ import { NextRequest } from 'next/server';
 import fs from 'fs/promises';
 import path from 'path';
 import { authenticate } from './auth';
+import { dbConnect } from './db';
+import { Vendor } from '@/models/Vendor';
 
 // Where the file manager opens by default (configurable). Full filesystem is
-// browsable above/below it — this is just the landing directory.
-export const FS_DEFAULT_PATH = process.env.FS_DEFAULT_PATH || '/var/www';
+// browsable above/below it — this is just the landing directory. Defaults to the
+// per-vendor root so the admin lands on the vendor folders.
+export const FS_DEFAULT_PATH = process.env.FS_DEFAULT_PATH || '/var/www/vendors';
 // Optional jail. Default '/' = full server access (super-admin only). Set
 // FS_ROOT=/var/www to confine the file manager to a subtree.
 export const FS_ROOT = process.env.FS_ROOT || '/';
@@ -138,8 +141,18 @@ export async function copyPath(from: string, to: string): Promise<void> {
 // vendor's files.
 export const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
 
-export async function vendorHome(vendorId: string): Promise<string> {
-  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(vendorId));
+/**
+ * The on-disk folder name for a vendor: its `username` when set (new vendors),
+ * else the Mongo id (legacy vendors created before usernames existed). Keeping
+ * the id fallback means existing vendors' files stay exactly where they are.
+ */
+export function vendorFolderKey(v: { username?: string | null; _id: unknown }): string {
+  return (v.username && String(v.username)) || String(v._id);
+}
+
+/** Resolve (and create) a vendor's private home directory from its folder key. */
+export async function vendorHome(folderKey: string): Promise<string> {
+  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(folderKey));
   await fs.mkdir(home, { recursive: true });
   return home;
 }
@@ -175,8 +188,8 @@ export async function dirSizeBytes(dir: string): Promise<{ bytes: number; files:
 }
 
 /** Disk usage of a vendor's private file-manager folder (NOT billed/quota). */
-export async function vendorDiskUsage(vendorId: string): Promise<{ bytes: number; files: number }> {
-  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(vendorId));
+export async function vendorDiskUsage(folderKey: string): Promise<{ bytes: number; files: number }> {
+  const home = path.join(path.resolve(FS_VENDOR_ROOT), String(folderKey));
   return dirSizeBytes(home);
 }
 
@@ -212,6 +225,9 @@ export async function requireVendorFs(
   const p = await authenticate(req);
   if (!p) return { error: 'unauthorized' };
   if (!p.vendorId || p.vendorStatus === 'suspended') return { error: 'forbidden' };
-  const home = await vendorHome(p.vendorId);
+  await dbConnect();
+  const vendor = await Vendor.findById(p.vendorId).lean();
+  // Folder is keyed by username (new vendors) and falls back to the id (legacy).
+  const home = await vendorHome(vendorFolderKey({ username: vendor?.username, _id: p.vendorId }));
   return { p, home };
 }

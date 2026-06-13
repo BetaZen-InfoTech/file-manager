@@ -3,12 +3,10 @@ import { dbConnect } from '@/lib/db';
 import { Vendor } from '@/models/Vendor';
 import { getServerSession } from '@/lib/session-server';
 import { realUsageByVendor } from '@/lib/vendor-stats';
-import { vendorDiskUsage } from '@/lib/server-fs';
+import { vendorDiskUsage, vendorFolderKey, FS_VENDOR_ROOT } from '@/lib/server-fs';
 import VendorsGrid from './vendors-grid';
 
 export const dynamic = 'force-dynamic';
-
-const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
 
 export default async function VendorsPage() {
   await dbConnect();
@@ -18,7 +16,7 @@ export default async function VendorsPage() {
     getServerSession()
   ]);
   const canImpersonate = session?.user.role === 'super_admin';
-  const disks = await Promise.all(items.map((v: any) => vendorDiskUsage(String(v._id))));
+  const disks = await Promise.all(items.map((v: any) => vendorDiskUsage(vendorFolderKey(v))));
 
   const vendors = items.map((v: any, i) => {
     const u = usageMap.get(String(v._id)) || { storageBytes: 0, fileCount: 0 };
@@ -27,6 +25,7 @@ export default async function VendorsPage() {
       id: String(v._id),
       name: v.name,
       slug: v.slug,
+      username: v.username || null,
       status: v.status as string,
       plan: v.plan as string,
       storageBytes: u.storageBytes,
@@ -34,7 +33,7 @@ export default async function VendorsPage() {
       maxStorageBytes: v.limits?.maxStorageBytes || 0,
       diskBytes: disk.bytes,
       diskFiles: disk.files,
-      folderPath: `${FS_VENDOR_ROOT}/${String(v._id)}`
+      folderPath: `${FS_VENDOR_ROOT}/${vendorFolderKey(v)}`
     };
   });
 

@@ -3,26 +3,25 @@ import { Vendor } from '@/models/Vendor';
 import { Bucket } from '@/models/Bucket';
 import { getServerSession } from '@/lib/session-server';
 import { realUsageForVendor, fmtBytes } from '@/lib/vendor-stats';
-import { vendorDiskUsage } from '@/lib/server-fs';
+import { vendorDiskUsage, vendorFolderKey, FS_VENDOR_ROOT } from '@/lib/server-fs';
 import VendorActions from './actions';
 
 export const dynamic = 'force-dynamic';
-
-const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
 
 export default async function VendorDetailPage({ params }: { params: { id: string } }) {
   await dbConnect();
   const v: any = await Vendor.findById(params.id).lean();
   if (!v) return <div className="text-gray-400">Vendor not found.</div>;
+  const folderKey = vendorFolderKey(v);
   const [bucketCount, realUsage, disk, session] = await Promise.all([
     Bucket.countDocuments({ vendorId: v._id }),
     realUsageForVendor(String(v._id)),
-    vendorDiskUsage(String(v._id)),
+    vendorDiskUsage(folderKey),
     getServerSession()
   ]);
   const fileCount = realUsage.fileCount; // real, storage-backed count
   const canImpersonate = session?.user.role === 'super_admin';
-  const folderPath = `${FS_VENDOR_ROOT}/${String(v._id)}`;
+  const folderPath = `${FS_VENDOR_ROOT}/${folderKey}`;
 
   const limits = v.limits || {};
   const maxStorage = limits.maxStorageBytes || 0;
@@ -48,7 +47,10 @@ export default async function VendorDetailPage({ params }: { params: { id: strin
               <span className="chip">{v.status}</span>
             )}
           </div>
-          <div className="font-mono text-xs text-gray-500">{v.slug}</div>
+          <div className="font-mono text-xs text-gray-500">
+            {v.slug}
+            {v.username && <span className="text-gray-600"> · @{v.username}</span>}
+          </div>
         </div>
         <VendorActions
           vendorId={String(v._id)}

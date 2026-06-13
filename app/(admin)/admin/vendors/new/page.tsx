@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { usernameFromName } from '@/lib/username';
 
 export default function NewVendorPage() {
   const router = useRouter();
@@ -45,6 +46,13 @@ export default function NewVendorPage() {
             onChange={(e) => setForm({ ...form, name: e.target.value })}
             required
           />
+          {form.name.trim() && (
+            <p className="text-[11px] text-gray-500">
+              Username (auto):{' '}
+              <code className="text-gray-300">{usernameFromName(form.name)}</code>
+              <span className="text-gray-600"> — server folder /var/www/vendors/{usernameFromName(form.name)}</span>
+            </p>
+          )}
         </div>
         <div className="space-y-1">
           <label className="text-xs text-gray-400">Slug (lowercase, a-z 0-9 -)</label>
