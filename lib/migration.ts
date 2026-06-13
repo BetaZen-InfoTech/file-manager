@@ -595,6 +595,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
   const step = async (name: string, status: string, detail = '') => {
     setStep(job, name, status, detail);
     job.heartbeatAt = new Date();
+    job.markModified('report'); // Mixed field — changes aren't tracked otherwise
     await job.save();
   };
 
@@ -746,6 +747,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
       if (fi % 5 === 0) {
         job.currentItem = `file ${fi}: ${fl.originalName}`;
         job.heartbeatAt = new Date();
+        job.markModified('report');
         await job.save();
       }
     }
@@ -941,12 +943,14 @@ export async function runFullMigration(jobId: string): Promise<void> {
     job.progress = 100;
     job.finishedAt = new Date();
     log(job, 'info', 'Full migration complete.');
+    job.markModified('report');
     await job.save();
   } catch (e) {
     job.status = 'failed';
     job.error = msg(e);
     job.finishedAt = new Date();
     log(job, 'error', `Full migration failed: ${msg(e)}`);
+    job.markModified('report');
     await job.save();
   }
 }
