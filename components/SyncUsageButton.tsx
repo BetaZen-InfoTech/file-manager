@@ -40,8 +40,11 @@ export default function SyncUsageButton({
   }
 
   const cls = compact ? 'btn-secondary px-3 py-1.5 text-xs' : 'btn-secondary';
+  const title = vendorId
+    ? 'Recalculate usage and mirror this vendor’s bucket files into the File Manager'
+    : 'Recalculate storage usage for every vendor from the actual stored files';
   return (
-    <button className={cls} disabled={state === 'busy'} onClick={sync} title="Recalculate storage usage from the actual stored files">
+    <button className={cls} disabled={state === 'busy'} onClick={sync} title={title}>
       {state === 'busy' ? 'Syncing…' : state === 'done' ? '✓ Synced' : state === 'error' ? '⚠ Retry' : `⟳ ${label}`}
     </button>
   );

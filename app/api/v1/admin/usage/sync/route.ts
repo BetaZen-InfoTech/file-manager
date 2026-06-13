@@ -5,13 +5,15 @@ import { can } from '@/lib/rbac';
 import { forbidden, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { syncVendorUsage, syncAllVendorsUsage } from '@/lib/vendor-stats';
+import { backfillVendorFiles } from '@/lib/file-mirror';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-export const maxDuration = 120;
+export const maxDuration = 300;
 
-// POST { vendorId? } → reconcile cached storage counters to the real files.
-// With a vendorId, syncs just that vendor; otherwise syncs every vendor.
+// POST { vendorId? } → reconcile cached storage counters to the real files, and
+// (per-vendor) mirror its bucket files onto the File Manager. With a vendorId,
+// syncs just that vendor; otherwise syncs every vendor's counters.
 export async function POST(req: NextRequest) {
   const p = await authenticate(req);
   if (!p) return unauthorized();
@@ -23,8 +25,10 @@ export async function POST(req: NextRequest) {
 
   if (vendorId) {
     const usage = await syncVendorUsage(vendorId);
-    await audit(p, req, { action: 'usage.sync', resourceType: 'vendor', resourceId: vendorId, meta: { ...usage } });
-    return jsonOk({ ok: true, vendorId, usage });
+    // Also mirror this vendor's bucket files to the File Manager (idempotent).
+    const mirror = await backfillVendorFiles(vendorId).catch(() => ({ written: 0, skipped: 0, failed: 0 }));
+    await audit(p, req, { action: 'usage.sync', resourceType: 'vendor', resourceId: vendorId, meta: { ...usage, mirror } });
+    return jsonOk({ ok: true, vendorId, usage, mirror });
   }
 
   const result = await syncAllVendorsUsage();
