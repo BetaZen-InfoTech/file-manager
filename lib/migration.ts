@@ -5,12 +5,20 @@ import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { dbConnect } from './db';
 import { storage, objectKey } from './storage';
-import { decryptSecret } from './crypto';
+import { decryptSecret, encryptSecret } from './crypto';
 import { Migration, MigrationDoc } from '@/models/Migration';
 import { Bucket } from '@/models/Bucket';
 import { Folder } from '@/models/Folder';
 import { FileModel } from '@/models/File';
 import { Vendor } from '@/models/Vendor';
+import { User } from '@/models/User';
+import { ApiKey } from '@/models/ApiKey';
+import { Link } from '@/models/Link';
+import { Plan } from '@/models/Plan';
+import { Payment } from '@/models/Payment';
+import { AuditLog } from '@/models/AuditLog';
+import { PlatformSettings } from '@/models/PlatformSettings';
+import { JwtRevocation } from '@/models/JwtRevocation';
 
 // Buffer cap per file (held in memory while copying). Larger objects are
 // skipped + logged rather than risk OOM.
@@ -497,6 +505,448 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
     job.finishedAt = new Date();
     setStep(job, 'copy', 'failed');
     log(job, 'error', `Transfer failed: ${msg(e)}`);
+    await job.save();
+  }
+}
+
+// ===========================================================================
+// FULL platform migration (bcdnp -> bcdnp): vendors, users, API keys, buckets,
+// folders, files, links, plans, payments, settings, audit logs. Pulls metadata
+// from the source's /transfer/export endpoint and streams file bytes. Merge
+// rules: vendors match by slug (merge into existing); files override on
+// path+name+size (skip byte-identical); credentials (hashes) carry over.
+// ===========================================================================
+
+async function* iterateExport(baseUrl: string, token: string, collection: string): AsyncGenerator<any> {
+  let after: string | null = null;
+  do {
+    const url = `${normBase(baseUrl)}/api/v1/transfer/export?collection=${collection}&limit=500${after ? `&after=${after}` : ''}`;
+    const r = await fetch(url, { headers: { authorization: `Bearer ${token}` }, redirect: 'manual' });
+    if (r.status !== 200) throw new Error(`export ${collection} failed (${r.status})`);
+    const j: any = await r.json();
+    for (const it of j.items || []) yield it;
+    after = j.nextAfter || null;
+  } while (after);
+}
+
+async function streamSourceFile(
+  baseUrl: string,
+  token: string,
+  sourceId: string,
+  key: string,
+  expectedSize: number,
+  mime: string
+): Promise<{ sha256: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 15 * 60 * 1000);
+  try {
+    const resp = await fetch(`${normBase(baseUrl)}/api/v1/transfer/file/${sourceId}/stream`, {
+      headers: { authorization: `Bearer ${token}` },
+      redirect: 'manual',
+      signal: ctrl.signal
+    });
+    if (resp.status !== 200 || !resp.body) throw new Error(`stream ${resp.status}`);
+    let counted = 0;
+    const hash = crypto.createHash('sha256');
+    const srcStream = Readable.fromWeb(resp.body as any);
+    const counter = new Transform({
+      transform(chunk, _e, cb) {
+        counted += chunk.length;
+        hash.update(chunk);
+        cb(null, chunk);
+      }
+    });
+    srcStream.on('error', (e) => counter.destroy(e));
+    srcStream.pipe(counter);
+    await storage.putObjectStream(key, counter, expectedSize, { mimeType: mime });
+    if (counted !== expectedSize) throw new Error(`size mismatch ${counted} != ${expectedSize}`);
+    return { sha256: hash.digest('hex') };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function runFullMigration(jobId: string): Promise<void> {
+  await dbConnect();
+  const claimed: any = await Migration.findOneAndUpdate(
+    {
+      _id: jobId,
+      $or: [{ status: 'pending' }, { status: 'running', heartbeatAt: { $lt: new Date(Date.now() - 120_000) } }]
+    },
+    { $set: { status: 'running', heartbeatAt: new Date() } },
+    { new: true }
+  );
+  if (!claimed) return;
+  const job: any = claimed;
+  if (!job.startedAt) job.startedAt = new Date();
+
+  const baseUrl = job.bcdnp.baseUrl;
+  const token = decryptSecret(job.bcdnp.tokenEnc);
+  const R: any = (job.report = job.report || {});
+  const inc = (a: string, b: string, n = 1) => {
+    R[a] = R[a] || {};
+    R[a][b] = (R[a][b] || 0) + n;
+  };
+  const vendorMap = new Map<string, string>();
+  const bucketMap = new Map<string, string>();
+  const folderMap = new Map<string, string>();
+  const fileMap = new Map<string, string>();
+  const touchedBuckets = new Set<string>();
+  const step = async (name: string, status: string, detail = '') => {
+    setStep(job, name, status, detail);
+    job.heartbeatAt = new Date();
+    await job.save();
+  };
+
+  try {
+    await storage.ensureBucket();
+    log(job, 'info', 'Full migration started.');
+
+    // 1) Vendors — merge by slug.
+    await step('vendors', 'running');
+    for await (const v of iterateExport(baseUrl, token, 'vendors')) {
+      try {
+        const ex = await Vendor.findOne({ slug: v.slug }).select('_id').lean();
+        if (ex) {
+          vendorMap.set(String(v._id), String(ex._id));
+          inc('vendors', 'merged');
+        } else {
+          let username = v.username || null;
+          if (username && (await Vendor.findOne({ username }).select('_id').lean())) {
+            username = `${username}_${Math.floor(Date.now() / 1000) % 100000}`;
+          }
+          const created = await Vendor.create({
+            name: v.name,
+            slug: v.slug,
+            username,
+            plan: v.plan || 'free',
+            status: v.status || 'active',
+            contactEmail: v.contactEmail || null,
+            limits: v.limits,
+            usage: v.usage || { storageBytes: 0, fileCount: 0 }
+          });
+          vendorMap.set(String(v._id), String(created._id));
+          inc('vendors', 'added');
+        }
+      } catch (e) {
+        log(job, 'error', `vendor ${v.slug}: ${msg(e)}`);
+      }
+    }
+    await step('vendors', 'completed', `${R.vendors?.added || 0} added · ${R.vendors?.merged || 0} merged`);
+
+    // 2) Buckets — match by (vendor, name).
+    await step('buckets', 'running');
+    for await (const b of iterateExport(baseUrl, token, 'buckets')) {
+      const vId = vendorMap.get(String(b.vendorId));
+      if (!vId) continue;
+      const ex = await Bucket.findOne({ vendorId: vId, name: b.name }).select('_id').lean();
+      if (ex) {
+        bucketMap.set(String(b._id), String(ex._id));
+        inc('buckets', 'reused');
+      } else {
+        const created = await Bucket.create({
+          vendorId: vId,
+          name: b.name,
+          description: b.description || '',
+          isPublic: !!b.isPublic,
+          settings: b.settings || {}
+        });
+        bucketMap.set(String(b._id), String(created._id));
+        inc('buckets', 'added');
+      }
+    }
+    await step('buckets', 'completed', `${R.buckets?.added || 0} added · ${R.buckets?.reused || 0} reused`);
+
+    // 3) Folders — match by (vendor, bucket, path, name). Parent remapped best-effort.
+    await step('folders', 'running');
+    for await (const f of iterateExport(baseUrl, token, 'folders')) {
+      const vId = vendorMap.get(String(f.vendorId));
+      const bId = bucketMap.get(String(f.bucketId));
+      if (!vId || !bId) continue;
+      const ex = await Folder.findOne({ vendorId: vId, bucketId: bId, path: f.path, name: f.name }).select('_id').lean();
+      if (ex) {
+        folderMap.set(String(f._id), String(ex._id));
+        inc('folders', 'reused');
+      } else {
+        const parentId = f.parentId ? folderMap.get(String(f.parentId)) || null : null;
+        const created = await Folder.create({ vendorId: vId, bucketId: bId, name: f.name, parentId, path: f.path || '/' });
+        folderMap.set(String(f._id), String(created._id));
+        inc('folders', 'added');
+      }
+    }
+    await step('folders', 'completed', `${R.folders?.added || 0} added · ${R.folders?.reused || 0} reused`);
+
+    // 4) Files — override on path+name+size, skip byte-identical, else create. Stream bytes.
+    await step('files', 'running');
+    let fi = 0;
+    for await (const fl of iterateExport(baseUrl, token, 'files')) {
+      fi++;
+      const vId = vendorMap.get(String(fl.vendorId));
+      const bId = bucketMap.get(String(fl.bucketId));
+      if (!vId || !bId) {
+        inc('files', 'skipped');
+        continue;
+      }
+      const folderId = fl.folderId ? folderMap.get(String(fl.folderId)) || null : null;
+      touchedBuckets.add(bId);
+      try {
+        const match: any = await FileModel.findOne({
+          vendorId: vId,
+          bucketId: bId,
+          folderId: folderId,
+          originalName: fl.originalName,
+          sizeBytes: fl.sizeBytes
+        }).lean();
+        const srcSha = (fl.checksum?.sha256 || '').toLowerCase();
+        const mime = fl.mimeType || (mimeLookup(fl.originalName) as string) || 'application/octet-stream';
+
+        if (match && match.checksum?.sha256 && srcSha && match.checksum.sha256.toLowerCase() === srcSha) {
+          fileMap.set(String(fl._id), String(match._id)); // byte-identical
+          inc('files', 'skipped');
+        } else if (match) {
+          // override: stream new bytes to a fresh key, then repoint the file
+          const key = objectKey(vId, bId, String(match._id), `v${Date.now()}-${fl.originalName}`);
+          const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), key, fl.sizeBytes, mime);
+          await FileModel.updateOne(
+            { _id: match._id },
+            { $set: { storageKey: key, sizeBytes: fl.sizeBytes, mimeType: mime, checksum: { sha256, md5: '' }, status: 'ready' } }
+          );
+          fileMap.set(String(fl._id), String(match._id));
+          inc('files', 'overridden');
+          inc('files', 'bytes', fl.sizeBytes);
+        } else {
+          const created: any = await FileModel.create({
+            vendorId: vId,
+            bucketId: bId,
+            folderId,
+            originalName: fl.originalName,
+            storageKey: `migrating-${new mongoose.Types.ObjectId()}`,
+            extension: (fl.originalName.split('.').pop() || '').toLowerCase(),
+            mimeType: mime,
+            sizeBytes: 0,
+            tags: fl.tags || [],
+            status: 'uploading',
+            uploadSource: 'api',
+            metadata: { ...(fl.metadata || {}), sourceFileId: String(fl._id) }
+          });
+          const key = objectKey(vId, bId, String(created._id), fl.originalName);
+          const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), key, fl.sizeBytes, mime);
+          await FileModel.updateOne(
+            { _id: created._id },
+            { $set: { storageKey: key, sizeBytes: fl.sizeBytes, mimeType: mime, checksum: { sha256, md5: '' }, status: 'ready' } }
+          );
+          fileMap.set(String(fl._id), String(created._id));
+          inc('files', 'added');
+          inc('files', 'bytes', fl.sizeBytes);
+        }
+      } catch (e) {
+        inc('files', 'failed');
+        log(job, 'error', `file ${fl.originalName}: ${msg(e)}`);
+      }
+      if (fi % 5 === 0) {
+        job.currentItem = `file ${fi}: ${fl.originalName}`;
+        job.heartbeatAt = new Date();
+        await job.save();
+      }
+    }
+    await step('files', 'completed', `${R.files?.added || 0} added · ${R.files?.overridden || 0} overridden · ${R.files?.skipped || 0} skipped · ${R.files?.failed || 0} failed`);
+
+    // 5) Users — by email (copy password hash). 6) API keys — by keyHash.
+    await step('accounts', 'running');
+    for await (const u of iterateExport(baseUrl, token, 'users')) {
+      try {
+        if (await User.findOne({ email: u.email }).select('_id').lean()) {
+          inc('users', 'skipped');
+          continue;
+        }
+        const vId = u.vendorId ? vendorMap.get(String(u.vendorId)) || null : null;
+        await User.create({
+          vendorId: vId,
+          email: u.email,
+          name: u.name || '',
+          passwordHash: u.passwordHash,
+          role: u.role,
+          permissions: u.permissions || [],
+          status: u.status || 'active'
+        });
+        inc('users', 'added');
+      } catch (e) {
+        log(job, 'error', `user ${u.email}: ${msg(e)}`);
+      }
+    }
+    for await (const k of iterateExport(baseUrl, token, 'apikeys')) {
+      try {
+        const vId = vendorMap.get(String(k.vendorId));
+        if (!vId) continue;
+        if (await ApiKey.findOne({ keyHash: k.keyHash }).select('_id').lean()) {
+          inc('apikeys', 'skipped');
+          continue;
+        }
+        const bucketIds = (k.bucketIds || []).map((b: any) => bucketMap.get(String(b))).filter(Boolean);
+        await ApiKey.create({
+          vendorId: vId,
+          name: k.name,
+          keyHash: k.keyHash,
+          prefix: k.prefix,
+          permissions: k.permissions || [],
+          bucketIds,
+          status: k.status || 'active',
+          expiresAt: k.expiresAt || null
+        });
+        inc('apikeys', 'added');
+      } catch (e) {
+        log(job, 'error', `apikey ${k.prefix}: ${msg(e)}`);
+      }
+    }
+    await step('accounts', 'completed', `${R.users?.added || 0} users · ${R.apikeys?.added || 0} keys`);
+
+    // 7) Links — by token (remap fileId).
+    await step('links', 'running');
+    for await (const l of iterateExport(baseUrl, token, 'links')) {
+      try {
+        const vId = vendorMap.get(String(l.vendorId));
+        const fId = fileMap.get(String(l.fileId));
+        if (!vId || !fId) {
+          inc('links', 'skipped');
+          continue;
+        }
+        if (await Link.findOne({ token: l.token }).select('_id').lean()) {
+          inc('links', 'skipped');
+          continue;
+        }
+        await Link.create({
+          vendorId: vId,
+          fileId: fId,
+          type: l.type,
+          token: l.token,
+          expiresAt: l.expiresAt || null,
+          maxDownloads: l.maxDownloads ?? null,
+          downloadCount: l.downloadCount || 0,
+          requiredScope: l.requiredScope || 'file:download',
+          passwordHash: l.passwordHash || null,
+          status: l.status || 'active',
+          note: l.note || ''
+        });
+        inc('links', 'added');
+      } catch (e) {
+        log(job, 'error', `link ${l.token}: ${msg(e)}`);
+      }
+    }
+    await step('links', 'completed', `${R.links?.added || 0} added · ${R.links?.skipped || 0} skipped`);
+
+    // 8) Plans, payments, settings, analytics.
+    await step('billing', 'running');
+    for await (const pl of iterateExport(baseUrl, token, 'plans')) {
+      try {
+        if (await Plan.findOne({ code: pl.code }).select('_id').lean()) {
+          inc('plans', 'skipped');
+          continue;
+        }
+        await Plan.create({ code: pl.code, name: pl.name, description: pl.description, priceInr: pl.priceInr, interval: pl.interval, limits: pl.limits, active: pl.active, sortOrder: pl.sortOrder });
+        inc('plans', 'added');
+      } catch (e) {
+        log(job, 'error', `plan ${pl.code}: ${msg(e)}`);
+      }
+    }
+    for await (const pay of iterateExport(baseUrl, token, 'payments')) {
+      try {
+        const vId = vendorMap.get(String(pay.vendorId));
+        if (!vId) continue;
+        if (pay.gatewayOrderId && (await Payment.findOne({ gatewayOrderId: pay.gatewayOrderId }).select('_id').lean())) {
+          inc('payments', 'skipped');
+          continue;
+        }
+        await Payment.create({
+          vendorId: vId,
+          planCode: pay.planCode,
+          gateway: pay.gateway,
+          amountInr: pay.amountInr,
+          currency: pay.currency,
+          interval: pay.interval,
+          status: pay.status,
+          gatewayOrderId: pay.gatewayOrderId || '',
+          gatewayPaymentId: pay.gatewayPaymentId || '',
+          gatewayRef: pay.gatewayRef || '',
+          periodStart: pay.periodStart || null,
+          periodEnd: pay.periodEnd || null,
+          raw: pay.raw || {}
+        });
+        inc('payments', 'added');
+      } catch (e) {
+        log(job, 'error', `payment: ${msg(e)}`);
+      }
+    }
+    for await (const s of iterateExport(baseUrl, token, 'platformsettings')) {
+      try {
+        if (await PlatformSettings.findOne({ key: s.key }).select('_id').lean()) {
+          inc('settings', 'skipped'); // don't clobber the target's own config
+          continue;
+        }
+        const value: any = s.value;
+        if (s.key === 'payments' && value) {
+          if (value.razorpay?.keySecret) value.razorpay.keySecret = encryptSecret(String(value.razorpay.keySecret));
+          if (value.phonepe?.saltKey) value.phonepe.saltKey = encryptSecret(String(value.phonepe.saltKey));
+        }
+        if (s.key === 'smtp' && value?.pass) value.pass = encryptSecret(String(value.pass));
+        await PlatformSettings.create({ key: s.key, value });
+        inc('settings', 'added');
+      } catch (e) {
+        log(job, 'error', `setting ${s.key}: ${msg(e)}`);
+      }
+    }
+    // Audit logs + JWT revocations (idempotent by _id / jti).
+    for await (const a of iterateExport(baseUrl, token, 'auditlogs')) {
+      try {
+        const vId = a.vendorId ? vendorMap.get(String(a.vendorId)) || null : null;
+        await AuditLog.collection.insertOne({
+          ...a,
+          _id: new mongoose.Types.ObjectId(String(a._id)),
+          vendorId: vId ? new mongoose.Types.ObjectId(vId) : null,
+          createdAt: a.createdAt ? new Date(a.createdAt) : new Date()
+        });
+        inc('auditlogs', 'added');
+      } catch {
+        /* dup _id on re-run — ignore */
+      }
+    }
+    for await (const jr of iterateExport(baseUrl, token, 'jwtrevocations')) {
+      try {
+        const vId = jr.vendorId ? vendorMap.get(String(jr.vendorId)) || null : null;
+        if (await JwtRevocation.findOne({ jti: jr.jti }).select('_id').lean()) continue;
+        await JwtRevocation.create({ jti: jr.jti, vendorId: vId, subject: jr.subject || '', expiresAt: jr.expiresAt || null });
+        inc('jwtrevocations', 'added');
+      } catch {
+        /* ignore */
+      }
+    }
+    await step('billing', 'completed', `${R.plans?.added || 0} plans · ${R.payments?.added || 0} payments · ${R.settings?.added || 0} settings · ${R.auditlogs?.added || 0} logs`);
+
+    // Reconcile counters for every bucket we touched + each vendor.
+    for (const bId of touchedBuckets) {
+      const agg = await FileModel.aggregate([
+        { $match: { bucketId: new mongoose.Types.ObjectId(bId), status: 'ready' } },
+        { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
+      ]);
+      await Bucket.updateOne({ _id: bId }, { $set: { storageBytes: agg[0]?.bytes || 0, fileCount: agg[0]?.count || 0 } });
+    }
+    for (const vId of new Set(vendorMap.values())) {
+      const agg = await FileModel.aggregate([
+        { $match: { vendorId: new mongoose.Types.ObjectId(vId), status: { $in: ['ready', 'trashed'] } } },
+        { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
+      ]);
+      await Vendor.updateOne({ _id: vId }, { $set: { 'usage.storageBytes': agg[0]?.bytes || 0, 'usage.fileCount': agg[0]?.count || 0 } });
+    }
+
+    job.status = 'completed';
+    job.progress = 100;
+    job.finishedAt = new Date();
+    log(job, 'info', 'Full migration complete.');
+    await job.save();
+  } catch (e) {
+    job.status = 'failed';
+    job.error = msg(e);
+    job.finishedAt = new Date();
+    log(job, 'error', `Full migration failed: ${msg(e)}`);
     await job.save();
   }
 }

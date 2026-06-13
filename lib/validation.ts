@@ -227,7 +227,7 @@ export const transferTokenSchema = z.object({
 export const migrationActionSchema = z
   .object({
     action: z.enum(['test', 'discover', 'start', 'resume', 'cancel']),
-    sourceType: z.enum(['s3', 'bcdnp']).optional(),
+    sourceType: z.enum(['s3', 'bcdnp', 'bcdnp-full']).optional(),
     source: migrationSourceSchema.optional(),
     bcdnp: migrationBcdnpSchema.optional(),
     id: z.string().min(1).max(64).optional(),
@@ -244,9 +244,11 @@ export const migrationActionSchema = z
     const needsSource = v.action === 'test' || v.action === 'discover' || v.action === 'start';
     if (needsSource) {
       if (st === 's3' && !v.source) ctx.addIssue({ code: 'custom', message: 'source is required for s3' });
-      if (st === 'bcdnp' && !v.bcdnp) ctx.addIssue({ code: 'custom', message: 'bcdnp (baseUrl, token) is required' });
+      if ((st === 'bcdnp' || st === 'bcdnp-full') && !v.bcdnp)
+        ctx.addIssue({ code: 'custom', message: 'bcdnp (baseUrl, token) is required' });
     }
-    if (v.action === 'start' && (!v.targetVendorId || !v.targetBucketName)) {
+    // Full migration imports ALL vendors — no single target vendor/bucket needed.
+    if (v.action === 'start' && st !== 'bcdnp-full' && (!v.targetVendorId || !v.targetBucketName)) {
       ctx.addIssue({ code: 'custom', message: 'targetVendorId and targetBucketName are required to start' });
     }
     if ((v.action === 'resume' || v.action === 'cancel') && !v.id) {

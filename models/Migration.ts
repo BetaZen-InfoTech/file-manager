@@ -11,9 +11,10 @@ const LogSchema = new Schema(
 
 const MigrationSchema = new Schema(
   {
-    // 's3' = import from S3-compatible storage; 'bcdnp' = pull from another
-    // file-manager install over its public domain using a transfer token.
-    sourceType: { type: String, enum: ['s3', 'bcdnp'], default: 's3' },
+    // 's3' = import from S3-compatible storage; 'bcdnp' = pull files from another
+    // file-manager install; 'bcdnp-full' = full platform migration (vendors,
+    // users, keys, buckets, files, links, billing, settings) from another install.
+    sourceType: { type: String, enum: ['s3', 'bcdnp', 'bcdnp-full'], default: 's3' },
 
     // S3 source (MinIO / S3 / Spaces). Optional now (only set when sourceType=s3).
     source: {
@@ -31,9 +32,10 @@ const MigrationSchema = new Schema(
       baseUrl: { type: String, default: '' },
       tokenEnc: { type: String, default: '' }
     },
-    // Destination on THIS server.
-    targetVendorId: { type: Schema.Types.ObjectId, ref: 'Vendor', required: true },
-    targetBucketName: { type: String, required: true },
+    // Destination on THIS server (single-bucket file imports). Not used by a
+    // full platform migration, which imports ALL vendors.
+    targetVendorId: { type: Schema.Types.ObjectId, ref: 'Vendor', default: null },
+    targetBucketName: { type: String, default: '' },
 
     status: {
       type: String,
@@ -50,6 +52,8 @@ const MigrationSchema = new Schema(
       failed: { type: Number, default: 0 }
     },
     currentItem: { type: String, default: '' },
+    // Per-entity counts for a full migration (vendors/users/files/links/…).
+    report: { type: Schema.Types.Mixed, default: {} },
     steps: { type: [StepSchema], default: [] },
     logs: { type: [LogSchema], default: [] },
     error: { type: String, default: '' },

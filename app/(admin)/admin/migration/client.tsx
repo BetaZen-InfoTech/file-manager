@@ -23,7 +23,7 @@ function fmtBytes(n: number) {
 }
 
 export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
-  const [mode, setMode] = useState<'bcdnp' | 's3'>('bcdnp');
+  const [mode, setMode] = useState<'bcdnp' | 'bcdnp-full' | 's3'>('bcdnp');
   const [bcdnp, setBcdnp] = useState({ baseUrl: '', token: '' });
   const [src, setSrc] = useState({
     endpoint: '',
@@ -49,9 +49,10 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
 
   function payload(action: string): any {
     const p: any = { action, sourceType: mode };
-    if (mode === 'bcdnp') p.bcdnp = bcdnp;
-    else p.source = src;
-    if (action === 'start') {
+    if (mode === 's3') p.source = src;
+    else p.bcdnp = bcdnp;
+    // Full migration imports ALL vendors — no single target.
+    if (action === 'start' && mode !== 'bcdnp-full') {
       p.targetVendorId = vendorId;
       p.targetBucketName = bucketName;
     }
@@ -137,7 +138,7 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
       <section className="card space-y-4">
         <h2 className="text-sm font-semibold text-white">Import files into this server</h2>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <button
             className={`rounded-lg border px-3 py-1.5 text-xs transition ${mode === 'bcdnp' ? 'border-accent bg-accent/15 text-accent' : 'border-border text-gray-400'}`}
             onClick={() => {
@@ -145,7 +146,16 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
               setDiscover(null);
             }}
           >
-            From another bcdnp server
+            Files from another bcdnp
+          </button>
+          <button
+            className={`rounded-lg border px-3 py-1.5 text-xs transition ${mode === 'bcdnp-full' ? 'border-accent bg-accent/15 text-accent' : 'border-border text-gray-400'}`}
+            onClick={() => {
+              setMode('bcdnp-full');
+              setDiscover(null);
+            }}
+          >
+            Full server migration
           </button>
           <button
             className={`rounded-lg border px-3 py-1.5 text-xs transition ${mode === 's3' ? 'border-accent bg-accent/15 text-accent' : 'border-border text-gray-400'}`}
@@ -158,7 +168,17 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
           </button>
         </div>
 
-        {mode === 'bcdnp' ? (
+        {mode === 'bcdnp-full' && (
+          <div className="rounded-lg border border-accent/30 bg-accent/5 px-3 py-2 text-[11px] leading-relaxed text-gray-300">
+            <span className="font-medium text-accent">Full migration</span> imports the <strong>entire</strong> source
+            server: vendors, users &amp; logins, API keys, buckets, folders, files, share links, plans, payments,
+            settings and audit logs. Vendors are matched by <strong>slug</strong> and merged; files override when
+            path+name+size match (byte-identical are skipped); password &amp; API-key hashes carry over so logins and
+            keys keep working. Use an <strong>instance-scoped</strong> transfer token from the old server.
+          </div>
+        )}
+
+        {mode !== 's3' ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-[11px] text-gray-400">
               Old server URL (or IP)
@@ -186,25 +206,39 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
           {discover && <span className="chip self-center">{discover.objects} files · {fmtBytes(discover.bytes)}</span>}
         </div>
 
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="text-[11px] text-gray-400">
-            Target vendor (here)
-            <select className="input mt-1" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
-              {vendors.length === 0 && <option value="">— no vendors —</option>}
-              {vendors.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.slug})</option>)}
-            </select>
-          </label>
-          {mode === 's3' && (
-            <label className="text-[11px] text-gray-400">Target bucket name<input className="input mt-1" value={bucketName} onChange={(e) => setBucketName(e.target.value)} /></label>
-          )}
-        </div>
+        {mode !== 'bcdnp-full' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-[11px] text-gray-400">
+              Target vendor (here)
+              <select className="input mt-1" value={vendorId} onChange={(e) => setVendorId(e.target.value)}>
+                {vendors.length === 0 && <option value="">— no vendors —</option>}
+                {vendors.map((v) => <option key={v.id} value={v.id}>{v.name} ({v.slug})</option>)}
+              </select>
+            </label>
+            {mode === 's3' && (
+              <label className="text-[11px] text-gray-400">Target bucket name<input className="input mt-1" value={bucketName} onChange={(e) => setBucketName(e.target.value)} /></label>
+            )}
+          </div>
+        )}
 
         <button
           className="btn"
-          disabled={!!busy || !!running || !vendorId || (mode === 'bcdnp' ? !bcdnp.baseUrl || !bcdnp.token : !src.endpoint || !src.bucket)}
-          onClick={() => { if (confirm('Start the import? It streams files directly (no zip) and keeps running on the server.')) call('start'); }}
+          disabled={
+            !!busy ||
+            !!running ||
+            (mode === 's3'
+              ? !src.endpoint || !src.bucket || !vendorId
+              : !bcdnp.baseUrl || !bcdnp.token || (mode === 'bcdnp' && !vendorId))
+          }
+          onClick={() => {
+            const m =
+              mode === 'bcdnp-full'
+                ? 'Start the FULL server migration? This imports all vendors, users, keys, files, links and settings from the source (merging by slug). It keeps running on the server.'
+                : 'Start the import? It streams files directly (no zip) and keeps running on the server.';
+            if (confirm(m)) call('start');
+          }}
         >
-          {running ? 'Transfer running…' : 'Start transfer'}
+          {running ? 'Migration running…' : mode === 'bcdnp-full' ? 'Start full migration' : 'Start transfer'}
         </button>
         {msg && <div className="text-xs text-gray-300">{msg}</div>}
       </section>
@@ -231,6 +265,15 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
               <span key={s.name} className="chip">{s.status === 'completed' ? '✓' : s.status === 'failed' ? '✗' : s.status === 'running' ? '…' : '·'} {s.name}{s.detail ? ` (${s.detail})` : ''}</span>
             ))}
           </div>
+          {job.report && Object.keys(job.report).length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {Object.entries(job.report).map(([k, v]: any) => (
+                <span key={k} className="rounded bg-[#1c1c20] px-2 py-0.5 font-mono text-[10px] text-gray-300">
+                  <span className="text-gray-500">{k}:</span> {Object.entries(v || {}).filter(([kk]) => kk !== 'bytes').map(([kk, vv]) => `${vv} ${kk}`).join(' · ')}
+                </span>
+              ))}
+            </div>
+          )}
           {(job.done?.skipped > 0 || job.done?.failed > 0) && (
             <div className="text-[11px] text-gray-400">{job.done.skipped} skipped · {job.done.failed} failed</div>
           )}

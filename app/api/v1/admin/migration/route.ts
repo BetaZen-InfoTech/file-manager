@@ -6,7 +6,7 @@ import { migrationActionSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { dbConnect } from '@/lib/db';
 import { encryptSecret } from '@/lib/crypto';
-import { testSource, discoverSource, runMigration, testBcdnp, discoverBcdnp, runBcdnpTransfer } from '@/lib/migration';
+import { testSource, discoverSource, runMigration, testBcdnp, discoverBcdnp, runBcdnpTransfer, runFullMigration } from '@/lib/migration';
 import { Migration } from '@/models/Migration';
 import { Vendor } from '@/models/Vendor';
 
@@ -47,12 +47,14 @@ export async function POST(req: NextRequest) {
   const { action, source, bcdnp, sourceType, id, targetVendorId, targetBucketName } = parsed.data;
   const st = sourceType || 's3';
 
+  const isBcdnp = st === 'bcdnp' || st === 'bcdnp-full';
+
   // ---- test / discover ----
   if (action === 'test') {
-    return jsonOk(st === 'bcdnp' ? await testBcdnp(bcdnp!.baseUrl, bcdnp!.token) : await testSource(source!));
+    return jsonOk(isBcdnp ? await testBcdnp(bcdnp!.baseUrl, bcdnp!.token) : await testSource(source!));
   }
   if (action === 'discover') {
-    return jsonOk(st === 'bcdnp' ? await discoverBcdnp(bcdnp!.baseUrl, bcdnp!.token) : await discoverSource(source!));
+    return jsonOk(isBcdnp ? await discoverBcdnp(bcdnp!.baseUrl, bcdnp!.token) : await discoverSource(source!));
   }
 
   await dbConnect();
@@ -62,7 +64,9 @@ export async function POST(req: NextRequest) {
     const job = await Migration.findById(id).lean();
     if (!job) return badRequest('job not found');
     await audit(p, req, { action: 'migration.resume', resourceType: 'migration', resourceId: String(id) });
-    if ((job as any).sourceType === 'bcdnp') void runBcdnpTransfer(String(id));
+    const stype = (job as any).sourceType;
+    if (stype === 'bcdnp-full') void runFullMigration(String(id));
+    else if (stype === 'bcdnp') void runBcdnpTransfer(String(id));
     else void runMigration(String(id));
     return jsonOk({ id, status: 'running' });
   }
@@ -72,7 +76,23 @@ export async function POST(req: NextRequest) {
     return jsonOk({ id, status: 'cancelled' });
   }
 
-  // ---- start ----
+  // ---- start: full platform migration (no single target vendor) ----
+  if (st === 'bcdnp-full') {
+    const t = await testBcdnp(bcdnp!.baseUrl, bcdnp!.token);
+    if (!t.ok) return badRequest(`Source not reachable: ${t.message}`);
+    const job = await Migration.create({
+      sourceType: 'bcdnp-full',
+      bcdnp: { baseUrl: bcdnp!.baseUrl.replace(/\/+$/, ''), tokenEnc: encryptSecret(bcdnp!.token) },
+      targetBucketName: 'full-migration',
+      status: 'pending',
+      createdBy: p.userId || null
+    });
+    await audit(p, req, { action: 'migration.start', resourceType: 'migration', resourceId: String(job._id), meta: { sourceType: 'bcdnp-full' } });
+    void runFullMigration(String(job._id));
+    return jsonOk({ id: String(job._id), status: 'pending' });
+  }
+
+  // ---- start: single-bucket file import ----
   const vendor = await Vendor.findById(targetVendorId).lean();
   if (!vendor) return badRequest('target vendor not found');
 
