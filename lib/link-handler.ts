@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Readable } from 'stream';
 import argon2 from 'argon2';
 import { dbConnect } from './db';
 import { storage } from './storage';
@@ -151,7 +152,10 @@ export async function handleLinkDownload(
   );
   if (!consumed) return jsonError('LIMIT_REACHED', 'download limit reached', 410);
 
-  const url = await storage.presignedGet(file.storageKey, 300, file.originalName);
+  // Stream the bytes THROUGH the app rather than 302-redirecting to a presigned
+  // storage URL — the object store is internal (127.0.0.1) and unreachable by the
+  // visitor, so a redirect breaks. Streaming serves it from this public host.
+  const obj = await storage.getObject(file.storageKey);
 
   await audit(null, req, {
     action: `link.download.${link.type}`,
@@ -161,5 +165,17 @@ export async function handleLinkDownload(
     meta: { fileId: String(file._id) }
   });
 
-  return NextResponse.redirect(url, 302);
+  const fileName = (file.originalName.split(/[\\/]/).pop() || 'download').replace(/"/g, '');
+  const headers: Record<string, string> = {
+    'content-type': obj.contentType || file.mimeType || 'application/octet-stream',
+    'content-disposition': `inline; filename="${encodeURIComponent(fileName)}"`,
+    'cache-control': 'private, no-store',
+    'accept-ranges': 'bytes'
+  };
+  const len = obj.contentLength ?? file.sizeBytes;
+  if (len) headers['content-length'] = String(len);
+  const node = obj.stream as any;
+  req.signal.addEventListener('abort', () => node?.destroy?.());
+  const web = Readable.toWeb(node) as ReadableStream<Uint8Array>;
+  return new NextResponse(web, { status: 200, headers });
 }
