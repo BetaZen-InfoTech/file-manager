@@ -10,6 +10,8 @@ import {
   AUTH_LABEL,
   METHOD_COLORS,
   ENDPOINT_SCOPE,
+  ENDPOINT_BODY_PARAMS,
+  paramRequirement,
   curlFor,
   postmanCollection,
   type ApiEndpoint
@@ -20,6 +22,72 @@ function MethodBadge({ method }: { method: ApiEndpoint['method'] }) {
     <span className={`rounded border px-1.5 py-0.5 font-mono text-[10px] font-bold ${METHOD_COLORS[method]}`}>
       {method}
     </span>
+  );
+}
+
+type ParamRow = { name: string; type: string; req: string; desc: string };
+
+function ReqBadge({ req }: { req: string }) {
+  const cls =
+    req === 'required'
+      ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+      : req === 'optional'
+        ? 'bg-white/5 text-gray-400 border-border'
+        : 'bg-amber-500/15 text-amber-300 border-amber-500/30';
+  return <span className={`rounded border px-1.5 py-0.5 text-[10px] font-medium ${cls}`}>{req}</span>;
+}
+
+function ParamTable({ title, rows }: { title: string; rows: ParamRow[] }) {
+  if (!rows.length) return null;
+  return (
+    <div className="space-y-1.5">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{title}</div>
+      <div className="overflow-x-auto rounded-md border border-border">
+        <table className="w-full border-collapse text-left">
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.name} className="border-t border-border first:border-t-0 align-top">
+                <td className="whitespace-nowrap py-1.5 pl-3 pr-3 font-mono text-[11px] text-gray-200">{r.name}</td>
+                <td className="whitespace-nowrap py-1.5 pr-3 font-mono text-[11px] text-gray-500">{r.type}</td>
+                <td className="whitespace-nowrap py-1.5 pr-3"><ReqBadge req={r.req} /></td>
+                <td className="py-1.5 pr-3 text-[11px] leading-relaxed text-gray-400">{r.desc}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function ParamsBlock({ ep }: { ep: ApiEndpoint }) {
+  const body = ENDPOINT_BODY_PARAMS[ep.id] || [];
+  const pathRows: ParamRow[] = (ep.pathParams || []).map((p) => ({
+    name: `:${p.name}`,
+    type: 'string',
+    req: p.required ? 'required' : 'optional',
+    desc: p.desc
+  }));
+  const queryRows: ParamRow[] = (ep.query || []).map((q) => ({
+    name: q.name,
+    type: 'string',
+    req: q.required ? 'required' : 'optional',
+    desc: q.desc
+  }));
+  const bodyRows: ParamRow[] = body.map((f) => ({
+    name: f.name,
+    type: f.type,
+    req: paramRequirement(f),
+    desc: f.desc
+  }));
+  if (!pathRows.length && !queryRows.length && !bodyRows.length) return null;
+  const bodyTitle = body.length && body[0].form ? 'Form fields (multipart/form-data)' : 'Body parameters';
+  return (
+    <div className="space-y-3">
+      <ParamTable title="Path parameters" rows={pathRows} />
+      <ParamTable title="Query parameters" rows={queryRows} />
+      <ParamTable title={bodyTitle} rows={bodyRows} />
+    </div>
   );
 }
 
@@ -321,6 +389,9 @@ export default function DocsClient() {
             {ep.auth === 'apikey' && !ENDPOINT_SCOPE[ep.id] && (
               <p className="text-[11px] text-gray-500">Needs any valid API key or session — no specific scope.</p>
             )}
+
+            {/* parameters */}
+            <ParamsBlock ep={ep} />
 
             {/* curl */}
             <div className="space-y-1">

@@ -268,7 +268,7 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'GET',
         path: '/files/:id/download',
         summary: 'Download file',
-        description: 'Redirects (302) to a short-lived presigned URL for the object.',
+        description: 'Streams the file bytes as an attachment through the app (Content-Disposition: attachment). The object store is internal, so the app proxies the bytes rather than redirecting.',
         auth: 'apikey',
         pathParams: [{ name: 'id', desc: 'File id', required: true }]
       },
@@ -431,7 +431,8 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'POST',
         path: '/files/:id/links',
         summary: 'Create link',
-        description: 'Create a public, temporary, or private link. expiresIn is seconds; maxDownloads and a password are optional.',
+        description:
+          'Create a shareable link for a file. Three types: public (/p/), temporary (/t/, auto-expiring) and private (/d/, JWT-gated). Temporary links REQUIRE an explicit expiresIn and cannot be permanent; public/private links can be made permanent with neverExpire (otherwise, with no expiresIn, they default to 60 seconds). See the body fields below for every rule.',
         auth: 'apikey',
         pathParams: [{ name: 'id', desc: 'File id', required: true }],
         body: { type: 'temporary', expiresIn: 3600, maxDownloads: 5 }
@@ -520,7 +521,7 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'GET',
         path: '/p/:token',
         summary: 'Public download',
-        description: 'Open a public link. 302-redirects to a short-lived presigned URL. Base = site root, e.g. https://cdn.betazeninfotech.com/p/:token',
+        description: 'Open a public link. Streams the file inline through the app (so it previews in the browser). Base = site root, e.g. https://cdn.betazeninfotech.com/p/:token . Append ?raw=1 to force the raw bytes; send x-link-password if the link is password-protected.',
         auth: 'public',
         pathParams: [{ name: 'token', desc: 'Public link token', required: true }]
       },
@@ -529,7 +530,7 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'GET',
         path: '/t/:token',
         summary: 'Temporary download',
-        description: 'Open a time-limited link; 410 once expired or over maxDownloads.',
+        description: 'Open a time-limited link; streams the file inline. Returns 410 once expired or once maxDownloads is reached. Send x-link-password if the link is password-protected.',
         auth: 'public',
         pathParams: [{ name: 'token', desc: 'Temporary link token', required: true }]
       },
@@ -770,7 +771,157 @@ export const SCOPE_GROUPS: ScopeGroup[] = [
 
 export const ALL_SCOPES: string[] = SCOPE_GROUPS.flatMap((g) => g.scopes.map((s) => s.id));
 
+// ---- per-endpoint body / form-field reference -----------------------------
+// Documents every field an endpoint accepts and the exact rule for each:
+// required, optional, or *conditional* (a short note). Drives the parameter
+// table in the docs page, the Postman request descriptions, and the OpenAPI
+// requestBody schema — one source so they can never drift from the validators.
+export interface ApiBodyParam {
+  name: string;
+  type: string;
+  /** true = always required · false/undefined = optional · string = conditional note */
+  required?: boolean | string;
+  desc: string;
+  /** true for multipart/form-data fields (vs a JSON body field) */
+  form?: boolean;
+}
+
+export const ENDPOINT_BODY_PARAMS: Record<string, ApiBodyParam[]> = {
+  // ---- Buckets & folders ----
+  'buckets-create': [
+    { name: 'name', type: 'string', required: true, desc: 'Bucket name, unique per vendor. Lowercase letters/digits/hyphens, must start with a letter or digit (^[a-z0-9][a-z0-9-]{0,62}$). A matching folder is created at /var/www/vendors/<username>/<name>/.' },
+    { name: 'description', type: 'string', desc: 'Optional, ≤ 500 chars.' },
+    { name: 'isPublic', type: 'boolean', desc: 'Optional. Marks the bucket public. Default false.' },
+    { name: 'settings.allowedMimeTypes', type: 'string[]', desc: 'Optional allow-list of MIME types. Empty/omitted = any type allowed.' },
+    { name: 'settings.maxFileSizeBytes', type: 'integer', desc: 'Optional per-file size cap in bytes. 0 or omitted = no per-bucket cap (the plan/global cap still applies).' }
+  ],
+  'buckets-update': [
+    { name: 'name', type: 'string', desc: 'New name (same rules as create). All fields are optional — send only what you want to change.' },
+    { name: 'description', type: 'string', desc: 'Optional, ≤ 500 chars.' },
+    { name: 'isPublic', type: 'boolean', desc: 'Optional.' },
+    { name: 'settings.allowedMimeTypes', type: 'string[]', desc: 'Optional. Replaces the existing allow-list.' },
+    { name: 'settings.maxFileSizeBytes', type: 'integer', desc: 'Optional. 0 = no cap.' }
+  ],
+  'folders-create': [
+    { name: 'name', type: 'string', required: true, desc: 'Folder name, 1–255 chars. Unique within its parent.' },
+    { name: 'parentId', type: 'string | null', desc: 'Parent folder id to nest under. null or omitted = bucket root.' }
+  ],
+  'folders-rename': [
+    { name: 'name', type: 'string', required: true, desc: 'New folder name, 1–255 chars.' }
+  ],
+  'folders-move': [
+    { name: 'parentId', type: 'string | null', required: true, desc: 'Target parent folder id (must be in the SAME bucket). null = move to the bucket root. Descendant paths re-compute automatically.' }
+  ],
+  // ---- Files ----
+  'files-upload': [
+    { name: 'file', type: 'file', required: true, form: true, desc: 'The file bytes (multipart/form-data field name "file").' },
+    { name: 'path', type: 'string', form: true, desc: 'Server sub-folder inside the bucket for the File Manager mirror. Default "/". The file is written to /<bucket>/<path>/<filename> so it appears in the File Manager.' },
+    { name: 'folderId', type: 'string | null', form: true, desc: 'Object-storage folder to file it under. null/omitted = bucket root. Independent of "path".' },
+    { name: 'tags', type: 'string', form: true, desc: 'Optional comma-separated tags.' },
+    { name: 'metadata', type: 'json string', form: true, desc: 'Optional JSON object (as a string) of custom metadata.' }
+  ],
+  'files-update': [
+    { name: 'originalName', type: 'string', desc: 'Rename the file (1–255). All fields optional — send only what changes.' },
+    { name: 'tags', type: 'string[]', desc: 'Replace the tag list.' },
+    { name: 'metadata', type: 'object', desc: 'Replace custom metadata.' },
+    { name: 'folderId', type: 'string | null', desc: 'Move the file to a folder in the SAME bucket. null = bucket root.' }
+  ],
+  'files-copy': [
+    { name: 'folderId', type: 'string | null', desc: 'Destination folder (same bucket). null/omitted = bucket root.' },
+    { name: 'name', type: 'string', desc: 'Name for the copy. Default "Copy of <original>".' }
+  ],
+  'files-content-put': [
+    { name: 'content', type: 'string', required: true, desc: 'New UTF-8 text content, ≤ 5 MB. The file must be textual; the per-file size cap is enforced.' }
+  ],
+  'files-extract': [
+    { name: 'folderId', type: 'string | null', desc: 'Folder to extract the archive into. null/omitted = bucket root. Guards: ≤ 500 MB zip, ≤ 2 GB uncompressed, no path traversal.' }
+  ],
+  'files-blank': [
+    { name: 'name', type: 'string', required: true, desc: 'File name, 1–255 chars.' },
+    { name: 'content', type: 'string', desc: 'Inline UTF-8 text, ≤ 5 MB. Default empty.' },
+    { name: 'path', type: 'string', desc: 'Server sub-folder inside the bucket for the File Manager mirror. Default "/".' },
+    { name: 'mimeType', type: 'string', desc: 'Optional content type. Inferred from the name when omitted.' },
+    { name: 'folderId', type: 'string | null', desc: 'Object-storage folder. null/omitted = bucket root.' }
+  ],
+  'files-archive': [
+    { name: 'name', type: 'string', desc: 'Name for the produced .zip. Default auto-generated.' },
+    { name: 'fileIds', type: 'string[]', required: 'at least one of fileIds / folderIds', desc: 'Files to include (≤ 2000).' },
+    { name: 'folderIds', type: 'string[]', required: 'at least one of fileIds / folderIds', desc: 'Folders to include recursively (≤ 200).' },
+    { name: 'folderId', type: 'string | null', desc: 'Where to store the resulting .zip. null = bucket root. Total source ≤ 1 GB.' }
+  ],
+  // ---- Large uploads (multipart) ----
+  'mp-init': [
+    { name: 'bucketId', type: 'string', required: true, desc: '24-hex id of the destination bucket.' },
+    { name: 'originalName', type: 'string', required: true, desc: 'File name, 1–255 chars.' },
+    { name: 'mimeType', type: 'string', required: true, desc: 'Content type of the file.' },
+    { name: 'sizeBytes', type: 'integer', desc: 'Optional declared size — quota and per-file/bucket caps are checked here (and authoritatively again on complete).' },
+    { name: 'folderId', type: 'string | null', desc: 'Optional destination folder. null = bucket root.' }
+  ],
+  'mp-complete': [
+    { name: 'parts', type: '{ PartNumber, ETag }[]', required: true, desc: 'Every uploaded part, from each "Upload a part" response. Order matters.' },
+    { name: 'sizeBytes', type: 'integer', desc: 'Ignored if sent — the server reads the authoritative size from storage (HeadObject).' }
+  ],
+  // ---- Links ----
+  'links-create': [
+    { name: 'type', type: "'public' | 'temporary' | 'private'", required: true, desc: 'public → /p/<token> (anyone with the URL). temporary → /t/<token> (auto-expires). private → /d/<token> (needs a 3rd-party JWT).' },
+    { name: 'expiresIn', type: 'integer (seconds)', required: 'required for temporary', desc: 'Lifetime, 60 … 315,360,000 (10 years). TEMPORARY links must set it. For public/private it is optional — but a link with NO expiresIn and NO neverExpire defaults to just 60 seconds.' },
+    { name: 'neverExpire', type: 'boolean', required: 'not allowed for temporary', desc: 'Make a public/private link permanent. Rejected (400) for temporary links.' },
+    { name: 'maxDownloads', type: 'integer | null', desc: 'Cap the total number of downloads; returns 410 once reached. Default unlimited.' },
+    { name: 'password', type: 'string', desc: 'Optional, 4–100 chars. The downloader must send it via the x-link-password header (never the query string).' },
+    { name: 'requiredScope', type: 'string', desc: 'PRIVATE links only — the JWT scope the caller must hold. Default "file:download".' }
+  ],
+  'links-reset': [
+    { name: 'types', type: "('public'|'temporary'|'private')[]", desc: 'Only revoke these link types. Omit = revoke all active links for the file.' },
+    { name: 'regenerate', type: 'boolean', desc: 'If true, create fresh links of the revoked types after revoking. Default false.' }
+  ],
+  // ---- File manager (jailed FS) ----
+  'fs-op': [
+    { name: 'action', type: "'mkdir'|'newfile'|'write'|'rename'|'delete'|'copy'|'chmod'|'zip'|'extract'", required: true, desc: 'The filesystem operation to run.' },
+    { name: 'path', type: 'string', required: true, desc: 'Target path, relative to your private folder (cannot escape it).' },
+    { name: 'to', type: 'string', required: 'rename · copy · zip · extract', desc: 'Destination path for move/copy/zip/extract.' },
+    { name: 'content', type: 'string', required: 'write · newfile', desc: 'File contents for write/newfile (≤ 2 MB).' },
+    { name: 'mode', type: 'string', required: 'chmod', desc: 'Octal permission string, e.g. "644".' },
+    { name: 'paths', type: 'string[]', required: 'zip', desc: 'Items to include in the archive (≤ 2000).' }
+  ],
+  'fs-upload': [
+    { name: 'file', type: 'file', required: true, form: true, desc: 'The upload (multipart/form-data field "file").' },
+    { name: 'path', type: 'string', form: true, desc: 'Full destination path (relative; may include sub-folders). Takes precedence over "dir".' },
+    { name: 'dir', type: 'string', form: true, desc: 'Destination directory (relative). Default "/".' }
+  ]
+};
+
 // ---- generators -----------------------------------------------------------
+
+/** Human label for a param's requirement: required · optional · or a note. */
+export function paramRequirement(p: ApiBodyParam): string {
+  if (p.required === true) return 'required';
+  if (typeof p.required === 'string') return p.required;
+  return 'optional';
+}
+
+/** Markdown bullet list of an endpoint's body/form fields (for Postman/OpenAPI text). */
+function bodyParamMarkdown(id: string): string {
+  const fields = ENDPOINT_BODY_PARAMS[id];
+  if (!fields || !fields.length) return '';
+  const heading = fields[0].form ? 'Form fields (multipart/form-data):' : 'Body fields:';
+  const lines = fields.map((f) => `- \`${f.name}\` (${f.type}, ${paramRequirement(f)}) — ${f.desc}`);
+  return `\n\n${heading}\n${lines.join('\n')}`;
+}
+
+/** Map a catalog type string to a loose OpenAPI schema for a property. */
+function oaPropSchema(p: ApiBodyParam): Record<string, unknown> {
+  const base = p.type.replace(/\s*\|\s*null\s*$/, '').trim();
+  let schema: Record<string, unknown>;
+  if (base.endsWith('[]')) schema = { type: 'array', items: { type: 'string' } };
+  else if (base.startsWith('{')) schema = { type: 'array', items: { type: 'object' } };
+  else if (/^integer/.test(base)) schema = { type: 'integer' };
+  else if (base === 'boolean') schema = { type: 'boolean' };
+  else if (base === 'object' || base === 'json string') schema = { type: 'object' };
+  else if (base === 'file') schema = { type: 'string', format: 'binary' };
+  else schema = { type: 'string' };
+  const note = typeof p.required === 'string' ? `${p.desc} (${p.required})` : p.desc;
+  return { ...schema, description: note };
+}
 
 export function curlFor(ep: ApiEndpoint, baseUrl: string, token: string): string {
   const url = `${baseUrl}${ep.path}`;
@@ -813,7 +964,10 @@ export function postmanCollection(baseUrl: string, token: string) {
         if (ep.body && !ep.multipart) headers.push({ key: 'Content-Type', value: 'application/json' });
         const req: Record<string, unknown> = {
           method: ep.method,
-          description: ep.description + (ENDPOINT_SCOPE[ep.id] ? `\n\nAPI-key scope required: ${ENDPOINT_SCOPE[ep.id]}` : ''),
+          description:
+            ep.description +
+            (ENDPOINT_SCOPE[ep.id] ? `\n\nAPI-key scope required: ${ENDPOINT_SCOPE[ep.id]}` : '') +
+            bodyParamMarkdown(ep.id),
           header: headers,
           url: {
             raw: `{{baseUrl}}${ep.path}`,
@@ -834,20 +988,21 @@ export function postmanCollection(baseUrl: string, token: string) {
           }
         };
         if (ep.multipart) {
-          let formdata: Record<string, unknown>[];
-          if (ep.id === 'fs-upload') {
-            formdata = [
-              { key: 'dir', value: '/', type: 'text', description: 'destination folder (relative)' },
-              { key: 'file', type: 'file', src: [] }
-            ];
-          } else if (ep.id === 'files-upload') {
-            formdata = [
-              { key: 'file', type: 'file', src: [] },
-              { key: 'path', value: '/', type: 'text', description: 'server folder inside the bucket (default /)' }
-            ];
-          } else {
-            formdata = [{ key: 'file', type: 'file', src: [] }];
-          }
+          const fields = ENDPOINT_BODY_PARAMS[ep.id];
+          const formdata: Record<string, unknown>[] =
+            fields && fields.length
+              ? fields.map((f) =>
+                  f.type === 'file'
+                    ? { key: f.name, type: 'file', src: [], description: f.desc }
+                    : {
+                        key: f.name,
+                        value: '',
+                        type: 'text',
+                        description: `${f.desc} [${paramRequirement(f)}]`,
+                        disabled: f.required !== true
+                      }
+                )
+              : [{ key: 'file', type: 'file', src: [] }];
           req.body = { mode: 'formdata', formdata };
         } else if (ep.body) {
           req.body = {
@@ -885,16 +1040,30 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
       params.push({ name: q.name, in: 'query', required: !!q.required, description: q.desc, schema: { type: 'string' } });
     }
     if (params.length) op.parameters = params;
+    const fields = ENDPOINT_BODY_PARAMS[ep.id];
     if (ep.multipart) {
-      op.requestBody = {
-        required: true,
-        content: { 'multipart/form-data': { schema: { type: 'object', properties: { file: { type: 'string', format: 'binary' } } } } }
-      };
-    } else if (ep.body) {
-      op.requestBody = {
-        required: ep.method !== 'GET',
-        content: { 'application/json': { schema: { type: 'object', example: ep.body } } }
-      };
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+      for (const f of fields || []) {
+        properties[f.name] = oaPropSchema(f);
+        if (f.required === true) required.push(f.name);
+      }
+      if (!properties.file) properties.file = { type: 'string', format: 'binary' };
+      const schema: Record<string, unknown> = { type: 'object', properties };
+      if (required.length) schema.required = required;
+      op.requestBody = { required: true, content: { 'multipart/form-data': { schema } } };
+    } else if (ep.body || fields) {
+      const properties: Record<string, unknown> = {};
+      const required: string[] = [];
+      for (const f of fields || []) {
+        properties[f.name] = oaPropSchema(f);
+        if (f.required === true) required.push(f.name);
+      }
+      const schema: Record<string, unknown> = { type: 'object' };
+      if (Object.keys(properties).length) schema.properties = properties;
+      if (required.length) schema.required = required;
+      if (ep.body) schema.example = ep.body;
+      op.requestBody = { required: ep.method !== 'GET', content: { 'application/json': { schema } } };
     }
     op.responses = { '200': { description: 'OK' }, '400': { description: 'Bad request' }, '401': { description: 'Unauthorized' } };
     paths[oaPath][ep.method.toLowerCase()] = op;
