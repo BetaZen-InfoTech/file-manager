@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Modal, CopyButton } from '@/components/Modal';
+import { SCOPE_GROUPS, ALL_SCOPES } from '@/lib/api-catalog';
 
 type KeyRow = {
   _id: string;
@@ -12,17 +13,6 @@ type KeyRow = {
   createdAt: string;
   lastUsedAt?: string | null;
 };
-
-const SCOPE_OPTIONS = [
-  'bucket:read',
-  'file:upload',
-  'file:read',
-  'file:download',
-  'file:list',
-  'file:delete',
-  'publicurl:create',
-  'publicurl:revoke'
-];
 
 function timeAgo(iso?: string | null) {
   if (!iso) return '—';
@@ -37,7 +27,7 @@ function timeAgo(iso?: string | null) {
 export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
   const [items, setItems] = useState<KeyRow[]>(initial);
   const [name, setName] = useState('');
-  const [scopes, setScopes] = useState<string[]>(['file:read', 'file:download']);
+  const [scopes, setScopes] = useState<string[]>(['file:list', 'file:read', 'file:download']);
   const [busy, setBusy] = useState(false);
   const [plain, setPlain] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -105,11 +95,11 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
             placeholder="e.g. Production API"
           />
         </div>
-        <div className="space-y-2">
+        <div className="space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-medium text-gray-400">Scopes</span>
             <div className="flex gap-2 text-[11px]">
-              <button type="button" className="text-accent hover:underline" onClick={() => setScopes([...SCOPE_OPTIONS])}>
+              <button type="button" className="text-accent hover:underline" onClick={() => setScopes([...ALL_SCOPES])}>
                 All
               </button>
               <button type="button" className="text-gray-500 hover:underline" onClick={() => setScopes([])}>
@@ -117,28 +107,39 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
               </button>
             </div>
           </div>
-          <div className="flex flex-wrap gap-2">
-            {SCOPE_OPTIONS.map((s) => {
-              const on = scopes.includes(s);
-              return (
-                <button
-                  key={s}
-                  type="button"
-                  onClick={() => toggleScope(s)}
-                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] transition ${
-                    on
-                      ? 'border-accent/60 bg-accent/15 text-accent'
-                      : 'border-border text-gray-400 hover:border-gray-500 hover:text-gray-200'
-                  }`}
-                >
-                  <span className={`flex h-3 w-3 items-center justify-center rounded-full text-[8px] ${on ? 'bg-accent text-white' : 'border border-gray-600'}`}>
-                    {on ? '✓' : ''}
-                  </span>
-                  {s}
-                </button>
-              );
-            })}
-          </div>
+          <p className="text-[11px] text-gray-500">
+            Grant only what the integration needs. A key with no matching scope is rejected for that action.
+            The <span className="text-gray-300">file manager</span> and public download links need no specific scope.
+          </p>
+          {SCOPE_GROUPS.map((grp) => (
+            <div key={grp.group} className="space-y-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{grp.group}</div>
+              <div className="flex flex-wrap gap-2">
+                {grp.scopes.map((s) => {
+                  const on = scopes.includes(s.id);
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      title={s.label}
+                      onClick={() => toggleScope(s.id)}
+                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] transition ${
+                        on
+                          ? 'border-accent/60 bg-accent/15 text-accent'
+                          : 'border-border text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                      }`}
+                    >
+                      <span className={`flex h-3 w-3 items-center justify-center rounded-full text-[8px] ${on ? 'bg-accent text-white' : 'border border-gray-600'}`}>
+                        {on ? '✓' : ''}
+                      </span>
+                      <span className="font-mono">{s.id}</span>
+                      <span className="hidden text-gray-500 sm:inline">· {s.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
         </div>
         {error && (
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</div>

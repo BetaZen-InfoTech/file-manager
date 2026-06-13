@@ -644,6 +644,119 @@ export const METHOD_COLORS: Record<Method, string> = {
   DELETE: 'text-rose-300 border-rose-500/40 bg-rose-500/10'
 };
 
+// ---- API-key scopes -------------------------------------------------------
+// The RBAC permission each endpoint enforces (mirrors the `can(p, '…')` checks
+// in the route handlers). Drives BOTH the per-endpoint scope badge in the docs
+// and the scope picker when creating an API key — so they can never drift.
+// Endpoints not listed need only a valid key/session (e.g. the file manager and
+// shareable URLs), or are admin/public.
+export const ENDPOINT_SCOPE: Record<string, string> = {
+  // Buckets & folders
+  'buckets-list': 'bucket:read',
+  'buckets-create': 'bucket:create',
+  'buckets-get': 'bucket:read',
+  'buckets-update': 'bucket:update',
+  'buckets-delete': 'bucket:delete',
+  'folders-list': 'file:list',
+  'folders-create': 'folder:create',
+  'folders-rename': 'folder:update',
+  'folders-delete': 'folder:update',
+  'folders-move': 'folder:update',
+  'folders-hide': 'folder:hide',
+  'folders-unhide': 'folder:hide',
+  // Files
+  'files-list': 'file:list',
+  'files-upload': 'file:upload',
+  'files-get': 'file:read',
+  'files-update': 'file:upload',
+  'files-delete': 'file:delete',
+  'files-download': 'file:download',
+  'files-restore': 'file:delete',
+  'files-copy': 'file:upload',
+  'files-content-get': 'file:read',
+  'files-content-put': 'file:upload',
+  'files-hide': 'folder:hide',
+  'files-unhide': 'folder:hide',
+  'files-extract': 'file:upload',
+  'files-blank': 'file:upload',
+  'files-archive': 'file:read',
+  // Multipart
+  'mp-init': 'file:upload',
+  'mp-part': 'file:upload',
+  'mp-complete': 'file:upload',
+  'mp-abort': 'file:upload',
+  // Links
+  'links-list': 'file:read',
+  'links-create': 'publicurl:create',
+  'links-reset': 'publicurl:revoke',
+  'links-revoke': 'publicurl:revoke',
+  // API keys & JWT (account)
+  'keys-create': 'apikey:create',
+  'keys-revoke': 'apikey:revoke',
+  'jwt-issue': 'apikey:create',
+  'jwt-revoke': 'apikey:revoke',
+  // Billing
+  'billing-checkout': 'settings:update'
+};
+
+export interface ScopeDef {
+  id: string;
+  label: string;
+}
+export interface ScopeGroup {
+  group: string;
+  scopes: ScopeDef[];
+}
+
+// Grouped, human-labelled scopes for the API-key creation UI. Covers every
+// vendor permission an endpoint can require (see ENDPOINT_SCOPE).
+export const SCOPE_GROUPS: ScopeGroup[] = [
+  {
+    group: 'Buckets',
+    scopes: [
+      { id: 'bucket:read', label: 'List & view buckets' },
+      { id: 'bucket:create', label: 'Create buckets' },
+      { id: 'bucket:update', label: 'Rename / change settings' },
+      { id: 'bucket:delete', label: 'Delete buckets' }
+    ]
+  },
+  {
+    group: 'Files',
+    scopes: [
+      { id: 'file:list', label: 'List files & folders' },
+      { id: 'file:read', label: 'View details / read text / list links' },
+      { id: 'file:download', label: 'Download files' },
+      { id: 'file:upload', label: 'Upload, edit, copy, extract, multipart' },
+      { id: 'file:delete', label: 'Trash & restore files' }
+    ]
+  },
+  {
+    group: 'Folders',
+    scopes: [
+      { id: 'folder:create', label: 'Create folders' },
+      { id: 'folder:update', label: 'Rename / move / delete folders' },
+      { id: 'folder:hide', label: 'Hide / unhide files & folders' }
+    ]
+  },
+  {
+    group: 'Share links',
+    scopes: [
+      { id: 'publicurl:create', label: 'Create share links' },
+      { id: 'publicurl:revoke', label: 'Reset / revoke links' }
+    ]
+  },
+  {
+    group: 'Account (sensitive)',
+    scopes: [
+      { id: 'apikey:create', label: 'Create API keys & issue JWTs' },
+      { id: 'apikey:revoke', label: 'Revoke API keys & JWTs' },
+      { id: 'settings:update', label: 'Billing checkout / vendor settings' }
+    ]
+  }
+];
+
+export const ALL_SCOPES: string[] = SCOPE_GROUPS.flatMap((g) => g.scopes.map((s) => s.id));
+
 // ---- generators -----------------------------------------------------------
 
 export function curlFor(ep: ApiEndpoint, baseUrl: string, token: string): string {
@@ -687,7 +800,7 @@ export function postmanCollection(baseUrl: string, token: string) {
         if (ep.body && !ep.multipart) headers.push({ key: 'Content-Type', value: 'application/json' });
         const req: Record<string, unknown> = {
           method: ep.method,
-          description: ep.description,
+          description: ep.description + (ENDPOINT_SCOPE[ep.id] ? `\n\nAPI-key scope required: ${ENDPOINT_SCOPE[ep.id]}` : ''),
           header: headers,
           url: {
             raw: `{{baseUrl}}${ep.path}`,
@@ -738,10 +851,11 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
     const op: any = {
       tags: [API_GROUPS.find((g) => g.endpoints.includes(ep))?.name || 'API'],
       summary: ep.summary,
-      description: ep.description,
+      description: ep.description + (ENDPOINT_SCOPE[ep.id] ? ` (API-key scope: ${ENDPOINT_SCOPE[ep.id]})` : ''),
       operationId: ep.id,
       security: ep.auth === 'public' || ep.auth === 'webhook' ? [] : [{ bearer: [] }, { cookie: [] }]
     };
+    if (ENDPOINT_SCOPE[ep.id]) op['x-required-scope'] = ENDPOINT_SCOPE[ep.id];
     const params: any[] = [];
     for (const pp of ep.pathParams || []) {
       params.push({ name: pp.name, in: 'path', required: true, description: pp.desc, schema: { type: 'string' } });

@@ -8,6 +8,7 @@ import {
   ALL_ENDPOINTS,
   AUTH_LABEL,
   METHOD_COLORS,
+  ENDPOINT_SCOPE,
   curlFor,
   postmanCollection,
   type ApiEndpoint
@@ -307,9 +308,17 @@ export default function DocsClient() {
             <div className="flex flex-wrap items-center gap-2">
               <MethodBadge method={ep.method} />
               <code className="break-all text-sm text-white">{ep.path}</code>
+              {ENDPOINT_SCOPE[ep.id] && (
+                <span className="chip" title="API-key scope required for this action">
+                  scope <code className="ml-1 text-accent">{ENDPOINT_SCOPE[ep.id]}</code>
+                </span>
+              )}
               <span className="chip ml-auto">{AUTH_LABEL[ep.auth]}</span>
             </div>
             <p className="text-sm text-gray-400">{ep.description}</p>
+            {ep.auth === 'apikey' && !ENDPOINT_SCOPE[ep.id] && (
+              <p className="text-[11px] text-gray-500">Needs any valid API key or session — no specific scope.</p>
+            )}
 
             {/* curl */}
             <div className="space-y-1">
