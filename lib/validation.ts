@@ -293,6 +293,7 @@ export const editContentSchema = z.object({
 export const blankFileSchema = z.object({
   name: z.string().min(1).max(255),
   folderId: z.string().max(64).nullable().optional(),
+  path: z.string().max(1024).optional(), // server-folder path within the bucket (default "/")
   content: z.string().max(5 * 1024 * 1024).optional(),
   mimeType: z.string().max(120).optional()
 });

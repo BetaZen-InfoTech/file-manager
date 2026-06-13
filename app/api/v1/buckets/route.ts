@@ -11,6 +11,8 @@ import {
 } from '@/lib/http';
 import { createBucketSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
+import { vendorHome, resolveInJail, vendorFolderKey } from '@/lib/server-fs';
+import fsp from 'fs/promises';
 import { Bucket } from '@/models/Bucket';
 import { Vendor } from '@/models/Vendor';
 
@@ -65,6 +67,16 @@ export async function POST(req: NextRequest) {
       await Bucket.deleteOne({ _id: bucket._id });
       return badRequest('Bucket limit reached');
     }
+  }
+
+  // Create the bucket's folder on the vendor's server space so uploads to it show
+  // in the file manager: /var/www/vendors/<username>/<bucketName>/ (best-effort).
+  try {
+    const home = await vendorHome(vendorFolderKey({ username: (vendor as any).username, _id: p.vendorId }));
+    const dest = resolveInJail(home, '/' + bucket.name);
+    if (dest) await fsp.mkdir(dest, { recursive: true });
+  } catch (e) {
+    console.error('bucket folder create failed', e);
   }
 
   await audit(p, req, {

@@ -10,9 +10,13 @@ import { blankFileSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
+import { vendorHome, resolveInJail, vendorFolderKey } from '@/lib/server-fs';
+import fsp from 'fs/promises';
+import nodePath from 'path';
 import { FileModel } from '@/models/File';
 import { Bucket } from '@/models/Bucket';
 import { Folder } from '@/models/Folder';
+import { Vendor } from '@/models/Vendor';
 
 export const runtime = 'nodejs';
 
@@ -73,6 +77,24 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
     Bucket.updateOne({ _id: bucket._id }, { $inc: { storageBytes: size, fileCount: 1 } })
   ]);
 
+  // Mirror onto the vendor's server folder so it shows in the file manager.
+  let serverPath: string | null = null;
+  try {
+    const vendor = await Vendor.findById(p.vendorId).select('username').lean();
+    const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
+    const cleanPath = String((parsed.data as any).path || '/').replace(/^\/+|\/+$/g, '');
+    const fileName = name.split(/[\\/]/).pop()!.replace(/[^\w.\-]/g, '_');
+    const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
+    const dest = resolveInJail(home, rel);
+    if (dest) {
+      await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
+      await fsp.writeFile(dest, buf);
+      serverPath = rel;
+    }
+  } catch (e) {
+    console.error('fs mirror failed', e);
+  }
+
   await audit(p, req, { action: 'file.create', resourceType: 'file', resourceId: String(doc._id), meta: { name } });
-  return jsonOk({ id: String(doc._id), originalName: name }, 201);
+  return jsonOk({ id: String(doc._id), originalName: name, serverPath }, 201);
 }

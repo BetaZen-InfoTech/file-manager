@@ -229,7 +229,8 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'POST',
         path: '/buckets/:bid/files',
         summary: 'Upload file',
-        description: 'Upload a file (multipart/form-data, field name "file"). Returns the file id + full details.',
+        description:
+          'Upload a file (multipart/form-data, field "file"). Optional fields: "path" — the destination folder inside the bucket (default "/"); "folderId", "tags", "metadata". The file is also written to your File Manager at /<bucket>/<path>/<filename>, so it shows up there. Returns the file id, full details, and serverPath.',
         auth: 'apikey',
         multipart: true,
         pathParams: [{ name: 'bid', desc: 'Bucket id', required: true }]
@@ -345,10 +346,11 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'POST',
         path: '/buckets/:bid/files/blank',
         summary: 'Create a (text) file',
-        description: 'Create a new file from inline text content (≤ 5 MB) without a multipart upload — handy for notes, configs, READMEs.',
+        description:
+          'Create a new file from inline text content (≤ 5 MB) without a multipart upload — handy for notes, configs, READMEs. Optional "path" sets the server folder inside the bucket (default "/"); the file also appears in your File Manager.',
         auth: 'apikey',
         pathParams: [{ name: 'bid', desc: 'Bucket id', required: true }],
-        body: { name: 'notes.txt', content: 'hello world', folderId: null }
+        body: { name: 'notes.txt', content: 'hello world', path: '/', folderId: null }
       },
       {
         id: 'files-archive',
@@ -832,13 +834,21 @@ export function postmanCollection(baseUrl: string, token: string) {
           }
         };
         if (ep.multipart) {
-          req.body = {
-            mode: 'formdata',
-            formdata: [
-              { key: ep.id === 'fs-upload' ? 'dir' : 'file', value: ep.id === 'fs-upload' ? '/' : '', type: ep.id === 'fs-upload' ? 'text' : 'file', src: [] },
-              ...(ep.id === 'fs-upload' ? [{ key: 'file', type: 'file', src: [] }] : [])
-            ]
-          };
+          let formdata: Record<string, unknown>[];
+          if (ep.id === 'fs-upload') {
+            formdata = [
+              { key: 'dir', value: '/', type: 'text', description: 'destination folder (relative)' },
+              { key: 'file', type: 'file', src: [] }
+            ];
+          } else if (ep.id === 'files-upload') {
+            formdata = [
+              { key: 'file', type: 'file', src: [] },
+              { key: 'path', value: '/', type: 'text', description: 'server folder inside the bucket (default /)' }
+            ];
+          } else {
+            formdata = [{ key: 'file', type: 'file', src: [] }];
+          }
+          req.body = { mode: 'formdata', formdata };
         } else if (ep.body) {
           req.body = {
             mode: 'raw',

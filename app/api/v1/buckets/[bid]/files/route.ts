@@ -1,6 +1,9 @@
 import { NextRequest } from 'next/server';
 import mime from 'mime-types';
+import fsp from 'fs/promises';
+import nodePath from 'path';
 import { dbConnect } from '@/lib/db';
+import { vendorHome, resolveInJail, vendorFolderKey } from '@/lib/server-fs';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
 import {
@@ -114,6 +117,10 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!quota.ok) return quotaExceeded();
 
   const folderId = form.get('folderId');
+  // Destination path within the bucket's server folder (default root "/"). The
+  // file is mirrored to /var/www/vendors/<username>/<bucket>/<path>/<name> so it
+  // shows in the file manager.
+  const pathField = String(form.get('path') || '/');
   const tagsRaw = form.get('tags');
   const metadataRaw = form.get('metadata');
   const tags =
@@ -211,6 +218,26 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
     )
   ]);
 
+  // Mirror onto the vendor's server folder so it appears in the File Manager:
+  //   /var/www/vendors/<username>/<bucketName>/<path>/<filename>
+  // Best-effort and jailed — a filesystem error never fails the API upload.
+  let mirroredPath: string | null = null;
+  try {
+    const vendor = await Vendor.findById(p.vendorId).select('username').lean();
+    const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
+    const cleanPath = pathField.replace(/^\/+|\/+$/g, '');
+    const fileName = (originalName.split(/[\\/]/).pop() || 'file').replace(/[^\w.\-]/g, '_');
+    const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
+    const dest = resolveInJail(home, rel);
+    if (dest) {
+      await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
+      await fsp.writeFile(dest, buf);
+      mirroredPath = rel;
+    }
+  } catch (e) {
+    console.error('fs mirror failed', e);
+  }
+
   // Quota warning email at 80% (fire-and-forget; only once per crossing — best-effort)
   Vendor.findById(p.vendorId)
     .lean()
@@ -252,7 +279,8 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
       metadata: doc.metadata,
       version: doc.version,
       status: doc.status,
-      createdAt: doc.createdAt
+      createdAt: doc.createdAt,
+      serverPath: mirroredPath // where it landed in the file manager (vendor-relative)
     },
     201
   );
