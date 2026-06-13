@@ -332,11 +332,41 @@ export const multipartCompleteSchema = z.object({
 
 // ---- Server filesystem (admin file manager) ----
 export const fsOpSchema = z.object({
-  action: z.enum(['mkdir', 'newfile', 'rename', 'delete', 'chmod', 'copy', 'write', 'zip', 'extract']),
-  path: z.string().min(1).max(4096),
+  action: z.enum([
+    'mkdir',
+    'newfile',
+    'rename',
+    'delete',
+    'chmod',
+    'copy',
+    'write',
+    'zip',
+    'extract',
+    'hide',
+    'unhide',
+    'trash',
+    'restore',
+    'trash-purge',
+    'trash-empty'
+  ]),
+  // Path-based actions require a non-empty path (enforced below). Trash
+  // management actions (restore/purge/empty) key off `id`, not a path.
+  path: z.string().min(1).max(4096).optional(),
   to: z.string().max(4096).optional(),
   content: z.string().max(2 * 1024 * 1024).optional(),
   mode: z.string().regex(/^[0-7]{3,4}$/).optional(),
   paths: z.array(z.string().max(4096)).max(2000).optional(),
-  name: z.string().max(255).optional()
+  name: z.string().max(255).optional(),
+  // A trash entry id for restore / purge.
+  id: z.string().max(256).optional()
+}).superRefine((d, ctx) => {
+  const trashIdActions = new Set(['restore', 'trash-purge', 'trash-empty']);
+  // Every action except the trash-management ones operates on a real path.
+  if (!trashIdActions.has(d.action) && (!d.path || d.path.length < 1)) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['path'], message: 'path is required for this action' });
+  }
+  // restore / purge need the trash entry id.
+  if ((d.action === 'restore' || d.action === 'trash-purge') && !d.id) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ['id'], message: 'id is required for this action' });
+  }
 });

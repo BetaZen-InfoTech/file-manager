@@ -560,3 +560,106 @@ test('[10] Vendor username (auto from name, only a-z0-9_)', async (t) => {
     assert.equal(disambiguateUsername('acme', ['acme', 'acme_2']), 'acme_3');
   });
 });
+
+// ----------------------------------------------------------------------------
+// File-manager features: trash, hide/unhide, root-guard, zip-slip boundary.
+// Dependency-free mirrors of the security-critical logic in lib/fs-ops.ts and
+// lib/fs-trash.ts (§ admin/vendor File Manager).
+// ----------------------------------------------------------------------------
+const nodePath = require('node:path');
+
+// Path-based actions that must never target the resolver root (FS root / home).
+const ROOT_PROTECTED = new Set([
+  'delete', 'trash', 'rename', 'copy', 'chmod', 'hide', 'unhide', 'write', 'newfile', 'mkdir', 'zip', 'extract'
+]);
+function rootGuardBlocks(action, target, rootAbs) {
+  return !!(rootAbs && target === rootAbs && ROOT_PROTECTED.has(action));
+}
+
+// Trash ids are bare tokens; reject slashes / traversal / junk.
+function validTrashId(id) {
+  return typeof id === 'string' && /^[A-Za-z0-9-]{1,64}$/.test(id) && nodePath.basename(id) === id;
+}
+
+// hide/unhide leading-dot derivation (posix basename space).
+function deriveName(action, base) {
+  return action === 'hide' ? (base.startsWith('.') ? base : `.${base}`) : base.replace(/^\.+/, '');
+}
+
+// A zip entry destination is safe only if it stays strictly inside dest.
+function zipEntrySafe(absEntry, dest) {
+  if (!absEntry) return false;
+  return absEntry === dest || absEntry.startsWith(dest + '/');
+}
+// Entry names with .. segments or NUL are rejected outright.
+function zipEntryNameOk(raw) {
+  return !!raw && !raw.includes('\0') && !raw.split(/[\/]/).includes('..');
+}
+
+// Schema rule: every action except the trash-management ones needs a path.
+function pathRequired(action) {
+  return !new Set(['restore', 'trash-purge', 'trash-empty']).has(action);
+}
+
+test('File Manager — root guard', async (t) => {
+  await t.test('blocks delete/trash/rename/zip on the root itself', () => {
+    for (const a of ['delete', 'trash', 'rename', 'zip', 'extract', 'chmod']) {
+      assert.equal(rootGuardBlocks(a, '/home/v', '/home/v'), true, a);
+    }
+  });
+  await t.test('allows ops on a child of the root', () => {
+    assert.equal(rootGuardBlocks('delete', '/home/v/file.txt', '/home/v'), false);
+  });
+  await t.test('non-destructive actions are not root-guarded', () => {
+    assert.equal(rootGuardBlocks('list', '/home/v', '/home/v'), false);
+  });
+});
+
+test('File Manager — trash id validation', async (t) => {
+  await t.test('accepts well-formed ids', () => {
+    assert.equal(validTrashId('1749999999999-ab3k9z'), true);
+  });
+  await t.test('rejects traversal / slashes / suffix injection', () => {
+    assert.equal(validTrashId('../etc/passwd'), false);
+    assert.equal(validTrashId('a/b'), false);
+    assert.equal(validTrashId('id.meta.json'), false);
+    assert.equal(validTrashId(''), false);
+  });
+});
+
+test('File Manager — hide/unhide name derivation', async (t) => {
+  await t.test('hide prefixes a dot once', () => {
+    assert.equal(deriveName('hide', 'file.txt'), '.file.txt');
+    assert.equal(deriveName('hide', '.file.txt'), '.file.txt');
+  });
+  await t.test('unhide strips leading dots', () => {
+    assert.equal(deriveName('unhide', '.file.txt'), 'file.txt');
+    assert.equal(deriveName('unhide', 'file.txt'), 'file.txt');
+  });
+});
+
+test('File Manager — zip-slip boundary', async (t) => {
+  const dest = '/var/www/vendors/acme';
+  await t.test('allows entries inside dest', () => {
+    assert.equal(zipEntrySafe('/var/www/vendors/acme/a/b.txt', dest), true);
+    assert.equal(zipEntrySafe(dest, dest), true);
+  });
+  await t.test('blocks the sibling-prefix bypass (acme-evil)', () => {
+    // The classic unzipper prefix-check bypass that this boundary test closes.
+    assert.equal(zipEntrySafe('/var/www/vendors/acme-evil/x', dest), false);
+  });
+  await t.test('rejects .. and NUL entry names', () => {
+    assert.equal(zipEntryNameOk('../sibling/x'), false);
+    assert.equal(zipEntryNameOk('a/../../x'), false);
+    assert.equal(zipEntryNameOk('ok/path.txt'), true);
+  });
+});
+
+test('File Manager — schema path requirement', async (t) => {
+  await t.test('path required for path-based actions', () => {
+    for (const a of ['delete', 'trash', 'mkdir', 'rename', 'zip', 'hide']) assert.equal(pathRequired(a), true, a);
+  });
+  await t.test('path NOT required for trash-management actions', () => {
+    for (const a of ['restore', 'trash-purge', 'trash-empty']) assert.equal(pathRequired(a), false, a);
+  });
+});

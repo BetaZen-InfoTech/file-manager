@@ -478,7 +478,7 @@ export const API_GROUPS: ApiGroup[] = [
         path: '/fs',
         summary: 'File operation',
         description:
-          'Run a filesystem action: mkdir, newfile, write, rename, delete, copy, chmod, zip, extract. All paths are confined to your folder.',
+          'Run a filesystem action: mkdir, newfile, write, rename, delete (permanent), copy, chmod, zip, extract, hide/unhide, or the recoverable trash actions (trash, restore, trash-purge, trash-empty). All paths are confined to your folder. List the trash with GET /fs?trash=1.',
         auth: 'apikey',
         body: { action: 'mkdir', path: '/reports' }
       },
@@ -876,12 +876,13 @@ export const ENDPOINT_BODY_PARAMS: Record<string, ApiBodyParam[]> = {
   ],
   // ---- File manager (jailed FS) ----
   'fs-op': [
-    { name: 'action', type: "'mkdir'|'newfile'|'write'|'rename'|'delete'|'copy'|'chmod'|'zip'|'extract'", required: true, desc: 'The filesystem operation to run.' },
-    { name: 'path', type: 'string', required: true, desc: 'Target path, relative to your private folder (cannot escape it).' },
+    { name: 'action', type: "'mkdir'|'newfile'|'write'|'rename'|'delete'|'copy'|'chmod'|'zip'|'extract'|'hide'|'unhide'|'trash'|'restore'|'trash-purge'|'trash-empty'", required: true, desc: 'The filesystem operation. delete = permanent; trash = recoverable (moves to .trash); restore/trash-purge target a trash id; hide/unhide toggle a leading-dot name.' },
+    { name: 'path', type: 'string', required: 'most actions (not restore/trash-purge/trash-empty)', desc: 'Target path, relative to your private folder (cannot escape it). Defaults to "/".' },
     { name: 'to', type: 'string', required: 'rename · copy · zip · extract', desc: 'Destination path for move/copy/zip/extract.' },
     { name: 'content', type: 'string', required: 'write · newfile', desc: 'File contents for write/newfile (≤ 2 MB).' },
     { name: 'mode', type: 'string', required: 'chmod', desc: 'Octal permission string, e.g. "644".' },
-    { name: 'paths', type: 'string[]', required: 'zip', desc: 'Items to include in the archive (≤ 2000).' }
+    { name: 'paths', type: 'string[]', required: 'zip', desc: 'Items to include in the archive (≤ 2000).' },
+    { name: 'id', type: 'string', required: 'restore · trash-purge', desc: 'A trash entry id (from GET /fs?trash=1) to restore or permanently purge.' }
   ],
   'fs-upload': [
     { name: 'file', type: 'file', required: true, form: true, desc: 'The upload (multipart/form-data field "file").' },

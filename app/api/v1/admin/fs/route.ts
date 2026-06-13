@@ -4,18 +4,32 @@ import path from 'path';
 import { badRequest, forbidden, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
 import { fsOpSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
-import { requireFsAdmin, safePath, listDir, FS_DEFAULT_PATH, FS_VENDOR_ROOT } from '@/lib/server-fs';
+import { requireFsAdmin, safePath, listDir, FS_DEFAULT_PATH, FS_ROOT, FS_VENDOR_ROOT } from '@/lib/server-fs';
 import { executeFsOp } from '@/lib/fs-ops';
+import { listTrash } from '@/lib/fs-trash';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-// GET ?path=/abs/dir → directory listing.
+// Recoverable trash location for the server file manager. The default is kept
+// inside FS_ROOT so a confined deployment (FS_ROOT set to a subtree) still has a
+// reachable trash; override with FS_TRASH_ROOT (must resolve within FS_ROOT).
+function adminTrashRoot(): string | null {
+  const fallback = FS_ROOT && FS_ROOT !== '/' ? path.join(FS_ROOT, '.fs-trash') : '/var/www/.fs-trash';
+  return safePath(process.env.FS_TRASH_ROOT || fallback);
+}
+
+// GET ?path=/abs/dir → directory listing. GET ?trash=1 → list trashed items.
 export async function GET(req: NextRequest) {
   const p = await requireFsAdmin(req);
   if (!p) return p === null ? forbidden('super-admin only') : unauthorized();
-  const raw = new URL(req.url).searchParams.get('path') || FS_DEFAULT_PATH;
+  const url = new URL(req.url);
+  if (url.searchParams.get('trash') === '1') {
+    const tr = adminTrashRoot();
+    return jsonOk({ trash: tr ? await listTrash(tr) : [] });
+  }
+  const raw = url.searchParams.get('path') || FS_DEFAULT_PATH;
   const dir = safePath(raw);
   if (!dir) return badRequest('invalid path');
   try {
@@ -46,7 +60,7 @@ export async function POST(req: NextRequest) {
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
   const d = parsed.data;
 
-  const r = await executeFsOp(d, safePath);
+  const r = await executeFsOp(d, safePath, { trashRoot: adminTrashRoot() });
   if (r.error) return badRequest(r.error);
 
   await audit(p, req, { action: `fs.${d.action}`, resourceType: 'filesystem', meta: { path: d.path, to: d.to } });
