@@ -15,6 +15,17 @@ export default function NewVendorPage() {
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Slug auto-tracks the name (= the username) until the admin edits it manually.
+  const [slugTouched, setSlugTouched] = useState(false);
+
+  function onName(v: string) {
+    const auto = usernameFromName(v);
+    setForm((f) => ({ ...f, name: v, slug: slugTouched ? f.slug : auto }));
+  }
+  function onSlug(v: string) {
+    setSlugTouched(true);
+    setForm((f) => ({ ...f, slug: v.toLowerCase().replace(/[^a-z0-9_-]/g, '') }));
+  }
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -43,7 +54,7 @@ export default function NewVendorPage() {
           <input
             className="input"
             value={form.name}
-            onChange={(e) => setForm({ ...form, name: e.target.value })}
+            onChange={(e) => onName(e.target.value)}
             required
           />
           {form.name.trim() && (
@@ -55,14 +66,15 @@ export default function NewVendorPage() {
           )}
         </div>
         <div className="space-y-1">
-          <label className="text-xs text-gray-400">Slug (lowercase, a-z 0-9 -)</label>
+          <label className="text-xs text-gray-400">Slug (auto from name — editable)</label>
           <input
             className="input"
             value={form.slug}
-            onChange={(e) => setForm({ ...form, slug: e.target.value })}
-            pattern="^[a-z0-9-]+$"
+            onChange={(e) => onSlug(e.target.value)}
+            pattern="^[a-z0-9_-]+$"
             required
           />
+          <p className="text-[11px] text-gray-500">Matches the username by default; edit if you want a different public slug.</p>
         </div>
         <div className="space-y-1">
           <label className="text-xs text-gray-400">Plan</label>

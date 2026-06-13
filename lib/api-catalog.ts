@@ -636,6 +636,25 @@ export const API_GROUPS: ApiGroup[] = [
 
 export const ALL_ENDPOINTS: ApiEndpoint[] = API_GROUPS.flatMap((g) => g.endpoints);
 
+// The docs portal, Postman export, and OpenAPI present ONLY what an API-key
+// integrator can call: vendor key endpoints + the public/JWT download URLs that
+// serve the links you create. Session-only bootstrap (auth) and admin/platform
+// endpoints are excluded — they aren't usable with an `fmsk_` token.
+// Account / credential / billing management is NOT an API-key action — API keys
+// can't create or revoke keys/JWTs or run checkout, so these are hidden from the
+// key-scoped docs (and their scopes are removed from the key picker).
+const ACCOUNT_ENDPOINTS = new Set(['keys-list', 'keys-create', 'keys-revoke', 'jwt-issue', 'jwt-revoke', 'billing-checkout']);
+export function isVendorApiEndpoint(ep: ApiEndpoint): boolean {
+  if (ep.auth === 'admin') return false;
+  if (ACCOUNT_ENDPOINTS.has(ep.id)) return false;
+  if (ep.auth === 'apikey') return true;
+  return ['dl-public', 'dl-temp', 'dl-private'].includes(ep.id);
+}
+export const VENDOR_API_GROUPS: ApiGroup[] = API_GROUPS
+  .map((g) => ({ ...g, endpoints: g.endpoints.filter(isVendorApiEndpoint) }))
+  .filter((g) => g.endpoints.length > 0);
+export const VENDOR_API_ENDPOINTS: ApiEndpoint[] = VENDOR_API_GROUPS.flatMap((g) => g.endpoints);
+
 export const METHOD_COLORS: Record<Method, string> = {
   GET: 'text-emerald-300 border-emerald-500/40 bg-emerald-500/10',
   POST: 'text-sky-300 border-sky-500/40 bg-sky-500/10',
@@ -744,14 +763,6 @@ export const SCOPE_GROUPS: ScopeGroup[] = [
       { id: 'publicurl:create', label: 'Create share links' },
       { id: 'publicurl:revoke', label: 'Reset / revoke links' }
     ]
-  },
-  {
-    group: 'Account (sensitive)',
-    scopes: [
-      { id: 'apikey:create', label: 'Create API keys & issue JWTs' },
-      { id: 'apikey:revoke', label: 'Revoke API keys & JWTs' },
-      { id: 'settings:update', label: 'Billing checkout / vendor settings' }
-    ]
   }
 ];
 
@@ -788,7 +799,7 @@ export function postmanCollection(baseUrl: string, token: string) {
       { key: 'baseUrl', value: baseUrl, type: 'string' },
       { key: 'token', value: token || 'fmsk_xxx', type: 'string' }
     ],
-    item: API_GROUPS.map((g) => ({
+    item: VENDOR_API_GROUPS.map((g) => ({
       name: g.name,
       description: g.blurb,
       item: g.endpoints.map((ep) => {
@@ -844,7 +855,7 @@ export function postmanCollection(baseUrl: string, token: string) {
 /** Build an OpenAPI 3.0.3 document from the same catalog. */
 export function openApiSpec(appUrl: string, sessionCookieName: string) {
   const paths: Record<string, any> = {};
-  for (const ep of ALL_ENDPOINTS) {
+  for (const ep of VENDOR_API_ENDPOINTS) {
     // Convert ":param" → "{param}" for OpenAPI path templating.
     const oaPath = ep.path.replace(/:([A-Za-z0-9_]+)/g, '{$1}');
     paths[oaPath] = paths[oaPath] || {};
@@ -894,7 +905,7 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
       }
     },
     security: [{ bearer: [] }, { cookie: [] }],
-    tags: API_GROUPS.map((g) => ({ name: g.name, description: g.blurb })),
+    tags: VENDOR_API_GROUPS.map((g) => ({ name: g.name, description: g.blurb })),
     paths
   };
 }

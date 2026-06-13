@@ -4,8 +4,9 @@ import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { Logo } from '@/components/Logo';
 import {
-  API_GROUPS,
-  ALL_ENDPOINTS,
+  // Show only what an API key can call — session/admin endpoints are hidden.
+  VENDOR_API_GROUPS as API_GROUPS,
+  VENDOR_API_ENDPOINTS as ALL_ENDPOINTS,
   AUTH_LABEL,
   METHOD_COLORS,
   ENDPOINT_SCOPE,
@@ -270,10 +271,11 @@ export default function DocsClient() {
           <div className="card space-y-2">
             <h1 className="text-xl font-semibold text-white">File Manager API</h1>
             <p className="text-sm text-gray-400">
-              REST API for buckets, files, links, API keys and 3rd-party JWTs. Authenticate with an
-              API key (<code className="text-gray-300">Authorization: Bearer fmsk_…</code>) or your
-              logged-in session cookie. Set your <strong>base URL</strong> and <strong>token</strong>{' '}
-              above, then use <em>Try it</em> on any endpoint, or download the Postman collection.
+              REST API for buckets, files, links, folders and your file manager. Authenticate with an
+              API key (<code className="text-gray-300">Authorization: Bearer fmsk_…</code>). Only endpoints
+              you can call with an API key are listed — each shows the <strong>scope</strong> it needs.
+              Set your <strong>base URL</strong> and <strong>token</strong> above, then use <em>Try it</em>,
+              or download the Postman collection.
             </p>
             <div className="flex flex-wrap gap-2 pt-1">
               <span className="chip">Base: <code className="ml-1">{baseUrl}</code></span>

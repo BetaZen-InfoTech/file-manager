@@ -20,7 +20,7 @@ export const createVendorSchema = z.object({
     .string()
     .min(2)
     .max(60)
-    .regex(/^[a-z0-9-]+$/),
+    .regex(/^[a-z0-9_-]+$/),
   plan: z.enum(['free', 'pro', 'enterprise']).optional(),
   ownerEmail: z.string().email().optional(),
   ownerPassword: z.string().min(8).optional(),
