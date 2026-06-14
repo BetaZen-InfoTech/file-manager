@@ -24,14 +24,96 @@ function timeAgo(iso?: string | null) {
   return `${Math.floor(s / 86400)}d ago`;
 }
 
+// Reusable scope picker — used by both "Create key" and "Edit scopes".
+function ScopePicker({ scopes, setScopes }: { scopes: string[]; setScopes: (s: string[]) => void }) {
+  const toggle = (s: string) => setScopes(scopes.includes(s) ? scopes.filter((x) => x !== s) : [...scopes, s]);
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-gray-400">Scopes</span>
+        <div className="flex gap-2 text-[11px]">
+          <button type="button" className="text-accent hover:underline" onClick={() => setScopes([...ALL_SCOPES])}>All</button>
+          <button type="button" className="text-gray-500 hover:underline" onClick={() => setScopes([])}>None</button>
+        </div>
+      </div>
+      <p className="text-[11px] text-gray-500">
+        Grant only what the integration needs. A key with no matching scope is rejected for that action.
+        The <span className="text-gray-300">file manager</span> and public download links need no specific scope.
+      </p>
+      {SCOPE_GROUPS.map((grp) => (
+        <div key={grp.group} className="space-y-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{grp.group}</div>
+          <div className="flex flex-wrap gap-2">
+            {grp.scopes.map((s) => {
+              const on = scopes.includes(s.id);
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  title={s.label}
+                  onClick={() => toggle(s.id)}
+                  className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] transition ${
+                    on
+                      ? 'border-accent/60 bg-accent/15 text-accent'
+                      : 'border-border text-gray-400 hover:border-gray-500 hover:text-gray-200'
+                  }`}
+                >
+                  <span className={`flex h-3 w-3 items-center justify-center rounded-full text-[8px] ${on ? 'bg-accent text-white' : 'border border-gray-600'}`}>
+                    {on ? '✓' : ''}
+                  </span>
+                  <span className="font-mono">{s.id}</span>
+                  <span className="hidden text-gray-500 sm:inline">· {s.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
   const [items, setItems] = useState<KeyRow[]>(initial);
   const [name, setName] = useState('');
-  const [scopes, setScopes] = useState<string[]>(['file:list', 'file:read', 'file:download']);
+  const [scopes, setScopes] = useState<string[]>(['file:list', 'file:read', 'file:download', 'events:subscribe']);
   const [busy, setBusy] = useState(false);
   const [plain, setPlain] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [revoking, setRevoking] = useState<KeyRow | null>(null);
+  // Edit-scopes state
+  const [editing, setEditing] = useState<KeyRow | null>(null);
+  const [editScopes, setEditScopes] = useState<string[]>([]);
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  function openEdit(k: KeyRow) {
+    setEditing(k);
+    setEditScopes([...k.permissions]);
+    setEditError(null);
+  }
+  async function saveEdit() {
+    if (!editing) return;
+    if (editScopes.length === 0) {
+      setEditError('Pick at least one scope.');
+      return;
+    }
+    setEditBusy(true);
+    setEditError(null);
+    const res = await fetch(`/api/v1/api-keys/${editing._id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ permissions: editScopes })
+    });
+    const data = await res.json();
+    setEditBusy(false);
+    if (!res.ok) {
+      setEditError(data?.error?.message || 'Failed to update scopes.');
+      return;
+    }
+    setItems((prev) => prev.map((k) => (k._id === editing._id ? { ...k, permissions: data.permissions } : k)));
+    setEditing(null);
+  }
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
@@ -75,10 +157,6 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
     setRevoking(null);
   }
 
-  function toggleScope(s: string) {
-    setScopes((prev) => (prev.includes(s) ? prev.filter((x) => x !== s) : [...prev, s]));
-  }
-
   const activeCount = items.filter((k) => k.status === 'active').length;
 
   return (
@@ -95,52 +173,7 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
             placeholder="e.g. Production API"
           />
         </div>
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-gray-400">Scopes</span>
-            <div className="flex gap-2 text-[11px]">
-              <button type="button" className="text-accent hover:underline" onClick={() => setScopes([...ALL_SCOPES])}>
-                All
-              </button>
-              <button type="button" className="text-gray-500 hover:underline" onClick={() => setScopes([])}>
-                None
-              </button>
-            </div>
-          </div>
-          <p className="text-[11px] text-gray-500">
-            Grant only what the integration needs. A key with no matching scope is rejected for that action.
-            The <span className="text-gray-300">file manager</span> and public download links need no specific scope.
-          </p>
-          {SCOPE_GROUPS.map((grp) => (
-            <div key={grp.group} className="space-y-1.5">
-              <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-600">{grp.group}</div>
-              <div className="flex flex-wrap gap-2">
-                {grp.scopes.map((s) => {
-                  const on = scopes.includes(s.id);
-                  return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      title={s.label}
-                      onClick={() => toggleScope(s.id)}
-                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] transition ${
-                        on
-                          ? 'border-accent/60 bg-accent/15 text-accent'
-                          : 'border-border text-gray-400 hover:border-gray-500 hover:text-gray-200'
-                      }`}
-                    >
-                      <span className={`flex h-3 w-3 items-center justify-center rounded-full text-[8px] ${on ? 'bg-accent text-white' : 'border border-gray-600'}`}>
-                        {on ? '✓' : ''}
-                      </span>
-                      <span className="font-mono">{s.id}</span>
-                      <span className="hidden text-gray-500 sm:inline">· {s.label}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-          ))}
-        </div>
+        <ScopePicker scopes={scopes} setScopes={setScopes} />
         {error && (
           <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{error}</div>
         )}
@@ -192,12 +225,14 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
                   </div>
                 </div>
                 {k.status === 'active' && (
-                  <button
-                    className="btn-danger shrink-0 px-3 py-1.5 text-xs"
-                    onClick={() => setRevoking(k)}
-                  >
-                    Revoke
-                  </button>
+                  <div className="flex shrink-0 gap-2">
+                    <button className="btn-secondary px-3 py-1.5 text-xs" onClick={() => openEdit(k)}>
+                      Edit scopes
+                    </button>
+                    <button className="btn-danger px-3 py-1.5 text-xs" onClick={() => setRevoking(k)}>
+                      Revoke
+                    </button>
+                  </div>
                 )}
               </div>
             ))}
@@ -252,6 +287,36 @@ export default function ApiKeyManager({ initial }: { initial: KeyRow[] }) {
           Revoke <strong className="text-white">{revoking?.name}</strong>? Any integration using it will
           immediately stop working. This can&apos;t be undone.
         </p>
+      </Modal>
+
+      {/* Edit scopes modal */}
+      <Modal
+        open={!!editing}
+        onClose={() => setEditing(null)}
+        title="Edit scopes"
+        icon={<span className="text-lg">🔧</span>}
+        size="lg"
+        footer={
+          <>
+            <button className="btn-secondary px-4 py-2 text-sm" onClick={() => setEditing(null)}>
+              Cancel
+            </button>
+            <button className="btn px-4 py-2 text-sm" disabled={editBusy} onClick={saveEdit}>
+              {editBusy ? 'Saving…' : 'Save scopes'}
+            </button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <p className="text-xs text-gray-400">
+            Updating scopes for <strong className="text-white">{editing?.name}</strong>. Changes apply immediately to the
+            existing key — no need to re-issue it.
+          </p>
+          <ScopePicker scopes={editScopes} setScopes={setEditScopes} />
+          {editError && (
+            <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{editError}</div>
+          )}
+        </div>
       </Modal>
     </div>
   );

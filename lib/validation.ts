@@ -95,6 +95,11 @@ export const createApiKeySchema = z.object({
   expiresAt: z.string().optional()
 });
 
+// Update the scopes of an existing key (the panel "Edit scopes" feature).
+export const updateApiKeyScopesSchema = z.object({
+  permissions: z.array(z.string()).min(1).max(50)
+});
+
 export const issueJwtSchema = z.object({
   subject: z.string().min(1).max(120),
   scopes: z.array(z.string()).min(1),
