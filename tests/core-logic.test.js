@@ -663,3 +663,53 @@ test('File Manager — schema path requirement', async (t) => {
     for (const a of ['restore', 'trash-purge', 'trash-empty']) assert.equal(pathRequired(a), false, a);
   });
 });
+
+// ----------------------------------------------------------------------------
+// Realtime events feed (lib/events.ts + GET /v1/events): tenant + bucket
+// scoping, SSE framing, cursor validation. Dependency-free mirrors.
+// ----------------------------------------------------------------------------
+function canSeeEvent(p, e) {
+  if (!p.vendorId || e.vendorId !== p.vendorId) return false;
+  if (p.bucketIds && p.bucketIds.length > 0) return !!e.bucketId && p.bucketIds.includes(e.bucketId);
+  return true;
+}
+function sseFrame(e) {
+  return `id: ${e.id}\nevent: ${e.type}\ndata: ${JSON.stringify(e)}\n\n`;
+}
+const isEventCursor = (s) => /^[a-f0-9]{24}$/i.test(s);
+
+test('Realtime — event visibility (tenant + bucket scoping)', async (t) => {
+  const evtA = { id: '1', type: 'file.upload', vendorId: 'V1', bucketId: 'B1' };
+  const evtNoBucket = { id: '2', type: 'link.create', vendorId: 'V1', bucketId: null };
+  await t.test('unscoped key sees own vendor events', () => {
+    assert.equal(canSeeEvent({ vendorId: 'V1' }, evtA), true);
+    assert.equal(canSeeEvent({ vendorId: 'V1' }, evtNoBucket), true);
+  });
+  await t.test('never sees another vendor', () => {
+    assert.equal(canSeeEvent({ vendorId: 'V2' }, evtA), false);
+    assert.equal(canSeeEvent({ vendorId: null }, evtA), false);
+  });
+  await t.test('bucket-scoped key sees only its bucket', () => {
+    assert.equal(canSeeEvent({ vendorId: 'V1', bucketIds: ['B1'] }, evtA), true);
+    assert.equal(canSeeEvent({ vendorId: 'V1', bucketIds: ['B9'] }, evtA), false);
+  });
+  await t.test('bucket-scoped key withholds events with unknown bucket (fail closed)', () => {
+    assert.equal(canSeeEvent({ vendorId: 'V1', bucketIds: ['B1'] }, evtNoBucket), false);
+  });
+});
+
+test('Realtime — SSE frame + cursor', async (t) => {
+  await t.test('frames as id/event/data terminated by blank line', () => {
+    const e = { id: 'abc', type: 'file.delete', vendorId: 'V1' };
+    const f = sseFrame(e);
+    assert.equal(f, 'id: abc\nevent: file.delete\ndata: {"id":"abc","type":"file.delete","vendorId":"V1"}\n\n');
+    // the data line round-trips to the original event
+    const dataLine = f.split('\n').find((l) => l.startsWith('data: ')).slice(6);
+    assert.deepEqual(JSON.parse(dataLine), e);
+  });
+  await t.test('cursor must be a 24-hex ObjectId', () => {
+    assert.equal(isEventCursor('64b7f9e2a1c3d4e5f6a7b8c9'), true);
+    assert.equal(isEventCursor('not-an-id'), false);
+    assert.equal(isEventCursor('../etc'), false);
+  });
+});

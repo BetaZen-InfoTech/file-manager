@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from './db';
 import { AuditLog } from '@/models/AuditLog';
 import { getRequestMeta, lookupGeo } from './request-meta';
+import { publishEvent } from './events';
 import type { Principal } from './rbac';
 
 export interface AuditInput {
@@ -17,11 +18,12 @@ export async function audit(
   req: NextRequest | null,
   input: AuditInput
 ): Promise<void> {
+  const vId = input.vendorId ?? principal?.vendorId ?? null;
   try {
     await dbConnect();
     const m = req ? getRequestMeta(req) : null;
     const doc = await AuditLog.create({
-      vendorId: input.vendorId ?? principal?.vendorId ?? null,
+      vendorId: vId,
       actorId: principal?.userId || principal?.apiKeyId || null,
       actorType: principal?.kind === 'apikey' ? 'apikey' : principal?.kind === 'session' ? 'user' : 'system',
       actorEmail: principal?.email || null,
@@ -44,6 +46,26 @@ export async function audit(
         ? { ...(input.meta || {}), impersonatorId: principal.impersonatorId }
         : input.meta || {}
     });
+
+    // Publish to the in-process realtime bus (GET /v1/events, SSE). Vendor-scoped
+    // events only; the AuditLog _id is the resume/delta cursor. Best-effort — a
+    // bus hiccup must never break the audited request.
+    if (vId) {
+      try {
+        publishEvent({
+          id: String(doc._id),
+          type: input.action,
+          vendorId: String(vId),
+          resourceType: input.resourceType || null,
+          resourceId: input.resourceId || null,
+          bucketId: (input.meta as any)?.bucketId ? String((input.meta as any).bucketId) : null,
+          actorType: principal?.kind === 'apikey' ? 'apikey' : principal?.kind === 'session' ? 'user' : 'system',
+          at: (doc as any).createdAt ? new Date((doc as any).createdAt).toISOString() : new Date(Date.now()).toISOString()
+        });
+      } catch (e) {
+        console.error('event publish failed', e);
+      }
+    }
 
     // Enrich with geolocation in the background (never block the request). Only
     // runs for a public IP with no CDN geo header already present.

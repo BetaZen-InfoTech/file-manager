@@ -15,6 +15,7 @@ export const PERMISSIONS = [
   'folder:hide',
   'publicurl:create',
   'publicurl:revoke',
+  'events:subscribe',
   'apikey:create',
   'apikey:revoke',
   'member:invite',
@@ -53,6 +54,7 @@ const VENDOR_OWNER_PERMS: Permission[] = [
   'folder:hide',
   'publicurl:create',
   'publicurl:revoke',
+  'events:subscribe',
   'apikey:create',
   'apikey:revoke',
   'member:invite',
@@ -70,7 +72,8 @@ const VENDOR_MEMBER_PERMS: Permission[] = [
   'file:read',
   'file:download',
   'file:list',
-  'folder:create'
+  'folder:create',
+  'events:subscribe'
 ];
 
 export function permissionsForRole(role: Role): Permission[] {

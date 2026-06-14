@@ -459,6 +459,27 @@ export const API_GROUPS: ApiGroup[] = [
     ]
   },
   {
+    name: 'Realtime events',
+    blurb:
+      'A live per-vendor activity feed (Server-Sent Events) so 3rd-party software gets pushed updates instead of polling — plus a JSON delta for fast catch-up.',
+    endpoints: [
+      {
+        id: 'events-stream',
+        method: 'GET',
+        path: '/events',
+        summary: 'Event stream / delta',
+        description:
+          'Realtime per-vendor event feed. DEFAULT: a Server-Sent Events stream (Content-Type: text/event-stream) — open it with a streaming HTTP client sending "Authorization: Bearer fmsk_…" and receive events ({id,type,vendorId,resourceType,resourceId,bucketId,at}) the instant they happen (file.upload, file.delete, link.create, bucket.*, fs.*, …). Auto-resume with the Last-Event-ID header. DELTA: add ?since=<cursor> for a one-shot JSON list of events after that cursor (poll using the returned cursor) — ideal for a fast initial load; omit ?since to get the most recent page. Bucket-scoped keys only receive events for their own buckets. NOTE: "Try it" suits the ?since delta (JSON); the live stream needs a streaming client (EventSource / curl -N).',
+        auth: 'apikey',
+        query: [
+          { name: 'since', desc: 'JSON delta: return events AFTER this cursor id. Omit for the live SSE stream.' },
+          { name: 'limit', desc: 'Delta page size (1–500, default 100).' },
+          { name: 'lastEventId', desc: 'SSE only: resume after this event id (or send the Last-Event-ID header).' }
+        ]
+      }
+    ]
+  },
+  {
     name: 'File manager (your private folder)',
     blurb:
       'A private, jailed filesystem area per vendor. Every path is relative to your home folder — you can never reach a parent, the server root, or another vendor.',
@@ -712,6 +733,8 @@ export const ENDPOINT_SCOPE: Record<string, string> = {
   'links-create': 'publicurl:create',
   'links-reset': 'publicurl:revoke',
   'links-revoke': 'publicurl:revoke',
+  // Realtime events
+  'events-stream': 'events:subscribe',
   // API keys & JWT (account)
   'keys-create': 'apikey:create',
   'keys-revoke': 'apikey:revoke',
@@ -766,6 +789,10 @@ export const SCOPE_GROUPS: ScopeGroup[] = [
       { id: 'publicurl:create', label: 'Create share links' },
       { id: 'publicurl:revoke', label: 'Reset / revoke links' }
     ]
+  },
+  {
+    group: 'Realtime',
+    scopes: [{ id: 'events:subscribe', label: 'Subscribe to the realtime event feed' }]
   }
 ];
 
