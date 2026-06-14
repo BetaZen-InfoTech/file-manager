@@ -21,9 +21,12 @@ import {
   EVENTS_PROSE,
   ERRORS_PROSE,
   ERROR_CODES,
+  WS_PROSE,
   quickstart,
   downloads,
-  nodeClient
+  nodeClient,
+  wsUrl,
+  wsExamples
 } from '@/lib/integration-guide';
 
 export const dynamic = 'force-dynamic';
@@ -216,6 +219,25 @@ export default function GuidePage() {
             <div className="space-y-1.5">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Reference client (Node 18+, no dependencies)</div>
               <Code>{nodeClient(appUrl)}</Code>
+            </div>
+
+            {/* WebSocket */}
+            <div className="space-y-3 rounded-lg border border-border p-4">
+              <h3 className="text-sm font-semibold text-white">WebSocket (<code className="text-accent">wss://</code>)</h3>
+              <p className="text-sm leading-relaxed text-gray-400">{WS_PROSE}</p>
+              <ul className="space-y-1.5 text-sm text-gray-400">
+                <li><strong className="text-gray-300">URL:</strong> <code className="break-all text-accent">{wsUrl(appUrl)}</code></li>
+                <li><strong className="text-gray-300">Auth (handshake):</strong> <code className="text-gray-300">Authorization: Bearer fmsk_…</code> (or <code className="text-gray-300">x-api-key</code>). Browsers can’t set handshake headers — use <code className="text-gray-300">?api_key=fmsk_…</code> (query keys can appear in logs) or the <code className="text-gray-300">Sec-WebSocket-Protocol</code> value.</li>
+                <li><strong className="text-gray-300">On connect:</strong> the server sends <code className="text-gray-300">{'{"type":"__connected","cursor":"…"}'}</code>, then one JSON message per event (same payload as above).</li>
+                <li><strong className="text-gray-300">Resume:</strong> reconnect with <code className="text-gray-300">?since=&lt;cursor&gt;</code> (the last event <code>id</code> you saw).</li>
+                <li><strong className="text-gray-300">Heartbeat:</strong> the server pings every 30s; clients auto-reply. You may also send <code className="text-gray-300">{'{"type":"ping"}'}</code>.</li>
+              </ul>
+              {wsExamples(appUrl).map((s) => (
+                <div key={s.title} className="space-y-1.5">
+                  <div className="text-[11px] font-medium text-gray-400">{s.title}</div>
+                  <Code>{s.code}</Code>
+                </div>
+              ))}
             </div>
           </section>
 

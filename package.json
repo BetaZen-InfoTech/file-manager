@@ -1,6 +1,6 @@
 {
   "name": "file-manager-saas",
-  "version": "1.0.37",
+  "version": "1.0.38",
   "private": true,
   "description": "Multi-tenant file manager SaaS — Next.js + MongoDB + MinIO",
   "scripts": {
@@ -11,6 +11,7 @@
     "test": "node --test tests/core-logic.test.js",
     "test:int": "vitest run tests/integration",
     "test:e2e": "playwright test",
+    "start:ws": "node server/ws-gateway.js",
     "seed:admin": "node scripts/seed-admin.js",
     "cron:expire-links": "node scripts/cron-expire-links.js",
     "cron:purge-trash": "node scripts/cron-purge-trash.js",
@@ -31,6 +32,7 @@
     "react-dom": "18.3.1",
     "sharp": "^0.33.5",
     "unzipper": "^0.12.3",
+    "ws": "^8.18.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {

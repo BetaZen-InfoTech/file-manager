@@ -70,6 +70,43 @@ export function downloads(appUrl: string): { label: string; url: string; note: s
   ];
 }
 
+// ---- WebSocket (wss) ------------------------------------------------------
+export const WS_PROSE =
+  'The same real-time feed is also available over WebSocket — for 3rd-party platforms that require it. It carries the identical event objects as the SSE feed and uses the same API key (events:subscribe scope). Bucket-scoped keys only receive their buckets’ events.';
+
+export function wsUrl(appUrl: string): string {
+  return appUrl.replace(/^http/i, 'ws') + '/api/v1/ws';
+}
+
+export function wsExamples(appUrl: string): { title: string; code: string }[] {
+  const W = wsUrl(appUrl);
+  return [
+    {
+      title: 'Node (ws package — server-to-server, header auth)',
+      code: `import WebSocket from 'ws';
+const ws = new WebSocket('${W}', {
+  headers: { Authorization: 'Bearer fmsk_YOUR_KEY' }   // or x-api-key
+});
+ws.on('open', () => console.log('connected'));
+ws.on('message', (data) => {
+  const e = JSON.parse(data.toString());
+  if (e.type === '__connected') return;                // hello + resume cursor
+  console.log(e.type, e.resourceId, e.at);
+});
+ws.on('close', () => setTimeout(reconnect, 1000));     // reconnect with ?since=<lastId>`
+    },
+    {
+      title: 'Browser (headers not allowed — use the query param)',
+      code: `const ws = new WebSocket('${W}?api_key=fmsk_YOUR_KEY');
+ws.onmessage = (m) => { const e = JSON.parse(m.data); console.log(e.type); };`
+    },
+    {
+      title: 'Quick test (wscat)',
+      code: `wscat -c "${W}" -H "Authorization: Bearer fmsk_YOUR_KEY"`
+    }
+  ];
+}
+
 // ---- Markdown generator (served at /docs/guide/raw) -----------------------
 const NODE_CLIENT = `const BASE = '__BASE__';
 const KEY = process.env.FM_API_KEY; // fmsk_...
@@ -212,6 +249,20 @@ ${eventBlocks}
 \`\`\`js
 ${nodeClient(appUrl)}
 \`\`\`
+
+### WebSocket (\`wss://\`)
+
+${WS_PROSE}
+
+- **URL:** \`${wsUrl(appUrl)}\`
+- **Auth (handshake):** \`Authorization: Bearer fmsk_YOUR_KEY\` (or \`x-api-key\`). Browsers can't set handshake headers — use \`?api_key=fmsk_YOUR_KEY\` (note: query keys can appear in logs) or pass the key as the \`Sec-WebSocket-Protocol\`.
+- **On connect** the server sends a hello: \`{"type":"__connected","vendorId":"…","cursor":"…"}\`, then one JSON message per event (same payload shape as above).
+- **Resume:** reconnect with \`?since=<cursor>\` (the \`id\` of the last event you saw) to receive anything missed.
+- **Heartbeat:** the server pings every 30s; standard clients auto-reply. You may also send \`{"type":"ping"}\` to get \`{"type":"pong"}\`.
+
+${wsExamples(appUrl)
+  .map((s) => `**${s.title}**\n\n\`\`\`js\n${s.code}\n\`\`\``)
+  .join('\n\n')}
 
 ---
 
