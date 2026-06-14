@@ -9,7 +9,7 @@ All endpoints below are relative to this base. All requests and responses are JS
 
 ## 1. Authentication
 
-Authenticate every request with a vendor API key (it looks like `fmsk_…`). Create one in your vendor dashboard under “API keys” — the secret is shown only once, so store it safely. Send it on every request as a Bearer token (or the `x-api-key` header). Each key carries a set of scopes (permissions) and may optionally be restricted to specific buckets; a request that needs a scope the key doesn’t have is rejected with `403`.
+Authenticate every request with a vendor API key (it looks like `fmsk_…`). Create one in your vendor dashboard under “API keys” — the secret is shown only once, so store it safely. Send it on every request as a Bearer token (or the `x-api-key` header). Each key carries a set of scopes (permissions) and may optionally be restricted to specific buckets; a request that needs a scope the key doesn’t have is rejected with `403`. The SAME key authenticates all three transports — the REST endpoints, the SSE feed (`/events`), and the WebSocket feed (`/ws`) — so one credential drives everything.
 
 ```bash
 # Either header works:
@@ -192,6 +192,7 @@ A live per-vendor activity feed (Server-Sent Events) so 3rd-party software gets 
 | Method | Path | Scope | Description |
 | --- | --- | --- | --- |
 | `GET` | `/events` | `events:subscribe` | Event stream / delta |
+| `GET` | `/ws` | `events:subscribe` | WebSocket stream |
 
 ### File manager (your private folder)
 A private, jailed filesystem area per vendor. Every path is relative to your home folder — you can never reach a parent, the server root, or another vendor.
