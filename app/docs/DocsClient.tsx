@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { Logo } from '@/components/Logo';
 import {
@@ -11,6 +11,8 @@ import {
   METHOD_COLORS,
   ENDPOINT_SCOPE,
   ENDPOINT_BODY_PARAMS,
+  EVENT_TYPE_GROUPS,
+  EVENT_SAMPLE,
   paramRequirement,
   curlFor,
   postmanCollection,
@@ -91,6 +93,45 @@ function ParamsBlock({ ep }: { ep: ApiEndpoint }) {
   );
 }
 
+function EventReference() {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Event payload</div>
+        <pre className="overflow-auto rounded-md border border-border bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-gray-200">
+          {JSON.stringify(EVENT_SAMPLE, null, 2)}
+        </pre>
+      </div>
+      <div className="space-y-1.5">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">
+          Event types (the <code className="text-gray-300">type</code> field)
+        </div>
+        <div className="overflow-x-auto rounded-md border border-border">
+          <table className="w-full border-collapse text-left">
+            <tbody>
+              {EVENT_TYPE_GROUPS.map((g) => (
+                <Fragment key={g.group}>
+                  <tr>
+                    <td colSpan={2} className="bg-[#16161a] px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-gray-500">
+                      {g.group}
+                    </td>
+                  </tr>
+                  {g.types.map((t) => (
+                    <tr key={t.type} className="border-t border-border/40 align-top">
+                      <td className="whitespace-nowrap py-1.5 pl-3 pr-3 font-mono text-[11px] text-accent">{t.type}</td>
+                      <td className="py-1.5 pr-3 text-[11px] text-gray-400">{t.desc}</td>
+                    </tr>
+                  ))}
+                </Fragment>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TryPanel({
   ep,
   baseUrl,
@@ -107,6 +148,78 @@ function TryPanel({
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<{ status: number; ms: number; body: string } | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [streaming, setStreaming] = useState(false);
+  const [frames, setFrames] = useState<string[]>([]);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // Abort any open stream when switching endpoints / unmounting.
+  useEffect(() => () => abortRef.current?.abort(), [ep.id]);
+
+  function buildUrl(): string {
+    let p = ep.path;
+    for (const pp of ep.pathParams || []) {
+      p = p.replace(`:${pp.name}`, encodeURIComponent(pathVals[pp.name] || `:${pp.name}`));
+    }
+    const qs = (ep.query || [])
+      .filter((q) => queryVals[q.name])
+      .map((q) => `${q.name}=${encodeURIComponent(queryVals[q.name])}`)
+      .join('&');
+    return `${baseUrl}${p}${qs ? `?${qs}` : ''}`;
+  }
+
+  // Open the SSE stream and render frames as they arrive. If the server answers
+  // with JSON instead (e.g. ?since= delta), show that JSON.
+  async function connectStream() {
+    setErr(null);
+    setFrames([]);
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setStreaming(true);
+    try {
+      const headers: Record<string, string> = { Accept: 'text/event-stream' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
+      const r = await fetch(buildUrl(), { headers, signal: ctrl.signal, credentials: 'include' });
+      if (!r.ok) {
+        const t = await r.text();
+        setErr(`${r.status}: ${t.slice(0, 300)}`);
+        return;
+      }
+      if (!(r.headers.get('content-type') || '').includes('text/event-stream') || !r.body) {
+        const t = await r.text();
+        let pretty = t;
+        try {
+          pretty = JSON.stringify(JSON.parse(t), null, 2);
+        } catch {
+          /* not json */
+        }
+        setFrames([pretty]);
+        return;
+      }
+      const reader = r.body.getReader();
+      const dec = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const frame = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          const dataLine = frame.split('\n').find((l) => l.startsWith('data: '));
+          if (dataLine) setFrames((prev) => [...prev.slice(-99), dataLine.slice(6)]);
+        }
+      }
+    } catch (e: any) {
+      if (e?.name !== 'AbortError') setErr(e?.message || 'Stream failed (CORS or network).');
+    } finally {
+      setStreaming(false);
+    }
+  }
+  function stopStream() {
+    abortRef.current?.abort();
+    setStreaming(false);
+  }
 
   async function send() {
     setBusy(true);
@@ -212,32 +325,67 @@ function TryPanel({
         )
       )}
 
-      <button className="btn" disabled={busy} onClick={send}>
-        {busy ? 'Sending…' : `Send ${ep.method}`}
-      </button>
-
-      {err && <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{err}</div>}
-
-      {res && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-2 text-xs">
-            <span
-              className={`rounded px-1.5 py-0.5 font-mono font-bold ${
-                res.status < 300
-                  ? 'bg-emerald-500/15 text-emerald-300'
-                  : res.status < 500
-                    ? 'bg-amber-500/15 text-amber-300'
-                    : 'bg-rose-500/15 text-rose-300'
-              }`}
-            >
-              {res.status}
-            </span>
-            <span className="text-gray-500">{res.ms} ms</span>
+      {ep.streaming ? (
+        <>
+          <div className="flex items-center gap-2">
+            {!streaming ? (
+              <button className="btn" onClick={connectStream}>
+                ▶ Connect stream
+              </button>
+            ) : (
+              <button className="btn-danger" onClick={stopStream}>
+                ■ Stop
+              </button>
+            )}
+            {streaming && (
+              <span className="flex items-center gap-1.5 text-[11px] text-emerald-300">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> live · {frames.length} event(s)
+              </span>
+            )}
           </div>
-          <pre className="max-h-80 overflow-auto rounded-md border border-border bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-gray-200">
-            {res.body}
-          </pre>
-        </div>
+          {err && <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{err}</div>}
+          {frames.length > 0 && (
+            <pre className="max-h-80 overflow-auto rounded-md border border-border bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-gray-200">
+              {frames.join('\n')}
+            </pre>
+          )}
+          {!err && !streaming && frames.length === 0 && (
+            <p className="text-[11px] text-gray-500">
+              Set your <strong>token</strong> above, then Connect. Trigger an action (e.g. upload a file) in another tab to
+              watch events arrive live. Tip: add <code className="text-gray-400">?since=</code> in the query box for a one-shot JSON delta instead.
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <button className="btn" disabled={busy} onClick={send}>
+            {busy ? 'Sending…' : `Send ${ep.method}`}
+          </button>
+
+          {err && <div className="rounded-md border border-danger/40 bg-danger/10 px-3 py-2 text-xs text-danger">{err}</div>}
+
+          {res && (
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2 text-xs">
+                <span
+                  className={`rounded px-1.5 py-0.5 font-mono font-bold ${
+                    res.status < 300
+                      ? 'bg-emerald-500/15 text-emerald-300'
+                      : res.status < 500
+                        ? 'bg-amber-500/15 text-amber-300'
+                        : 'bg-rose-500/15 text-rose-300'
+                  }`}
+                >
+                  {res.status}
+                </span>
+                <span className="text-gray-500">{res.ms} ms</span>
+              </div>
+              <pre className="max-h-80 overflow-auto rounded-md border border-border bg-black/40 p-3 font-mono text-[11px] leading-relaxed text-gray-200">
+                {res.body}
+              </pre>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -383,15 +531,23 @@ export default function DocsClient() {
                   scope <code className="ml-1 text-accent">{ENDPOINT_SCOPE[ep.id]}</code>
                 </span>
               )}
+              {ep.streaming && (
+                <span className="chip border-emerald-500/40 text-emerald-300" title="Long-lived Server-Sent Events stream">
+                  ● Streaming (SSE)
+                </span>
+              )}
               <span className="chip ml-auto">{AUTH_LABEL[ep.auth]}</span>
             </div>
-            <p className="text-sm text-gray-400">{ep.description}</p>
+            <p className="whitespace-pre-line text-sm text-gray-400">{ep.description}</p>
             {ep.auth === 'apikey' && !ENDPOINT_SCOPE[ep.id] && (
               <p className="text-[11px] text-gray-500">Needs any valid API key or session — no specific scope.</p>
             )}
 
             {/* parameters */}
             <ParamsBlock ep={ep} />
+
+            {/* realtime event reference */}
+            {ep.streaming && <EventReference />}
 
             {/* curl */}
             <div className="space-y-1">

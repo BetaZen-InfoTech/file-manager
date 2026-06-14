@@ -21,6 +21,7 @@ export interface ApiEndpoint {
   query?: ApiParam[];
   multipart?: boolean;
   body?: Record<string, unknown>; // example JSON body
+  streaming?: boolean; // long-lived SSE response (Server-Sent Events)
 }
 
 export interface ApiGroup {
@@ -468,8 +469,9 @@ export const API_GROUPS: ApiGroup[] = [
         method: 'GET',
         path: '/events',
         summary: 'Event stream / delta',
+        streaming: true,
         description:
-          'Realtime per-vendor event feed. DEFAULT: a Server-Sent Events stream (Content-Type: text/event-stream) — open it with a streaming HTTP client sending "Authorization: Bearer fmsk_…" and receive events ({id,type,vendorId,resourceType,resourceId,bucketId,at}) the instant they happen (file.upload, file.delete, link.create, bucket.*, fs.*, …). Auto-resume with the Last-Event-ID header. DELTA: add ?since=<cursor> for a one-shot JSON list of events after that cursor (poll using the returned cursor) — ideal for a fast initial load; omit ?since to get the most recent page. Bucket-scoped keys only receive events for their own buckets. NOTE: "Try it" suits the ?since delta (JSON); the live stream needs a streaming client (EventSource / curl -N).',
+          'Realtime per-vendor event feed. DEFAULT: a Server-Sent Events stream (Content-Type: text/event-stream) — open it with a streaming HTTP client sending "Authorization: Bearer fmsk_…" and receive events ({id,type,vendorId,resourceType,resourceId,bucketId,at}) the instant they happen (file.upload, file.delete, link.create, bucket.*, fs.*, …). Auto-resume with the Last-Event-ID header. DELTA: add ?since=<cursor> for a one-shot JSON list of events after that cursor (poll using the returned cursor) — ideal for a fast initial load; omit ?since to get the most recent page. Bucket-scoped keys only receive events for their own buckets. Use the live "Try it" below to open the stream in your browser, or ?since for the JSON delta.',
         auth: 'apikey',
         query: [
           { name: 'since', desc: 'JSON delta: return events AFTER this cursor id. Omit for the live SSE stream.' },
@@ -918,6 +920,103 @@ export const ENDPOINT_BODY_PARAMS: Record<string, ApiBodyParam[]> = {
   ]
 };
 
+// ---- realtime event-type reference (GET /events) --------------------------
+// The `type` field of every streamed / delta event is one of these audit
+// actions. Drives the docs event-type table + the Postman/OpenAPI descriptions.
+export interface EventTypeDef {
+  type: string;
+  desc: string;
+}
+export const EVENT_TYPE_GROUPS: { group: string; types: EventTypeDef[] }[] = [
+  {
+    group: 'Files',
+    types: [
+      { type: 'file.upload', desc: 'A file was uploaded to a bucket.' },
+      { type: 'file.create', desc: 'A file was created from inline text (blank file).' },
+      { type: 'file.update', desc: 'File metadata changed (rename, tags, move…).' },
+      { type: 'file.edit', desc: 'A text file’s contents were overwritten.' },
+      { type: 'file.copy', desc: 'A file was duplicated.' },
+      { type: 'file.delete', desc: 'A file was moved to trash.' },
+      { type: 'file.restore', desc: 'A trashed file was restored.' },
+      { type: 'file.download', desc: 'A file was downloaded via the API.' },
+      { type: 'file.hide', desc: 'A file was hidden.' },
+      { type: 'file.unhide', desc: 'A file was un-hidden.' },
+      { type: 'file.zip', desc: 'Files/folders were archived into a .zip.' },
+      { type: 'file.extract', desc: 'A .zip was extracted into the bucket.' },
+      { type: 'file.multipart.init', desc: 'A large (multipart) upload started.' },
+      { type: 'file.multipart.complete', desc: 'A multipart upload finished — file is ready.' },
+      { type: 'file.multipart.abort', desc: 'A multipart upload was aborted.' }
+    ]
+  },
+  {
+    group: 'Buckets',
+    types: [
+      { type: 'bucket.create', desc: 'A bucket was created.' },
+      { type: 'bucket.update', desc: 'A bucket was renamed or reconfigured.' },
+      { type: 'bucket.delete', desc: 'A bucket was deleted.' }
+    ]
+  },
+  {
+    group: 'Folders',
+    types: [
+      { type: 'folder.create', desc: 'A folder was created.' },
+      { type: 'folder.update', desc: 'A folder was renamed or moved.' },
+      { type: 'folder.delete', desc: 'A folder was deleted.' },
+      { type: 'folder.hide', desc: 'A folder was hidden.' },
+      { type: 'folder.unhide', desc: 'A folder was un-hidden.' }
+    ]
+  },
+  {
+    group: 'Share links',
+    types: [
+      { type: 'link.create', desc: 'A share link was created.' },
+      { type: 'link.reset', desc: 'A file’s links were reset / regenerated.' },
+      { type: 'link.revoke', desc: 'A share link was revoked.' },
+      { type: 'link.download.public', desc: 'A public link was opened / downloaded.' },
+      { type: 'link.download.temporary', desc: 'A temporary link was opened / downloaded.' },
+      { type: 'link.download.private', desc: 'A private (JWT) link was opened / downloaded.' }
+    ]
+  },
+  {
+    group: 'File manager (jailed FS)',
+    types: [
+      { type: 'fs.mkdir', desc: 'A directory was created.' },
+      { type: 'fs.newfile', desc: 'An empty file was created.' },
+      { type: 'fs.write', desc: 'A file was written / edited.' },
+      { type: 'fs.upload', desc: 'A file was uploaded into the file manager.' },
+      { type: 'fs.rename', desc: 'An item was renamed / moved.' },
+      { type: 'fs.copy', desc: 'An item was copied.' },
+      { type: 'fs.delete', desc: 'An item was permanently deleted.' },
+      { type: 'fs.trash', desc: 'An item was moved to the trash.' },
+      { type: 'fs.restore', desc: 'An item was restored from the trash.' },
+      { type: 'fs.chmod', desc: 'Permissions were changed.' },
+      { type: 'fs.zip', desc: 'Items were compressed.' },
+      { type: 'fs.extract', desc: 'A zip was extracted.' },
+      { type: 'fs.hide', desc: 'An item was hidden.' },
+      { type: 'fs.unhide', desc: 'An item was un-hidden.' }
+    ]
+  }
+];
+
+export const ALL_EVENT_TYPES: string[] = EVENT_TYPE_GROUPS.flatMap((g) => g.types.map((t) => t.type));
+
+export const EVENT_SAMPLE = {
+  id: '6a2e7012c12f65f87232a1f3',
+  type: 'file.upload',
+  vendorId: '6a2d7e0a626116c181d92a71',
+  resourceType: 'file',
+  resourceId: '6a2e70b4c12f65f87232a201',
+  bucketId: '6a2e6fc6c12f65f87232a172',
+  actorType: 'apikey',
+  at: '2026-06-14T09:10:42.615Z'
+};
+
+/** Reference text appended to the Postman/OpenAPI description of the feed. */
+export function eventsReferenceText(): string {
+  const lines = EVENT_TYPE_GROUPS.map((g) => `• ${g.group}: ${g.types.map((t) => t.type).join(', ')}`);
+  return `\n\nEvent payload example:\n${JSON.stringify(EVENT_SAMPLE, null, 2)}\n\nEvent types (the \`type\` field):\n${lines.join('\n')}`;
+}
+
 // ---- generators -----------------------------------------------------------
 
 /** Human label for a param's requirement: required · optional · or a note. */
@@ -953,9 +1052,13 @@ function oaPropSchema(p: ApiBodyParam): Record<string, unknown> {
 
 export function curlFor(ep: ApiEndpoint, baseUrl: string, token: string): string {
   const url = `${baseUrl}${ep.path}`;
-  const lines = [`curl -X ${ep.method} "${url}"`];
+  // -N (no buffering) for an SSE stream so frames print as they arrive.
+  const lines = [`curl -X ${ep.method}${ep.streaming ? ' -N' : ''} "${url}"`];
   if (ep.auth !== 'public' && ep.auth !== 'webhook') {
     lines.push(`  -H "Authorization: Bearer ${token || '<TOKEN>'}"`);
+  }
+  if (ep.streaming) {
+    lines.push('  -H "Accept: text/event-stream"');
   }
   if (ep.multipart) {
     lines.push('  -F "file=@/path/to/file.pdf"');
@@ -990,12 +1093,14 @@ export function postmanCollection(baseUrl: string, token: string) {
           headers.push({ key: 'Authorization', value: 'Bearer {{token}}' });
         }
         if (ep.body && !ep.multipart) headers.push({ key: 'Content-Type', value: 'application/json' });
+        if (ep.streaming) headers.push({ key: 'Accept', value: 'text/event-stream' });
         const req: Record<string, unknown> = {
           method: ep.method,
           description:
             ep.description +
             (ENDPOINT_SCOPE[ep.id] ? `\n\nAPI-key scope required: ${ENDPOINT_SCOPE[ep.id]}` : '') +
-            bodyParamMarkdown(ep.id),
+            bodyParamMarkdown(ep.id) +
+            (ep.streaming ? eventsReferenceText() : ''),
           header: headers,
           url: {
             raw: `{{baseUrl}}${ep.path}`,
@@ -1055,7 +1160,10 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
     const op: any = {
       tags: [API_GROUPS.find((g) => g.endpoints.includes(ep))?.name || 'API'],
       summary: ep.summary,
-      description: ep.description + (ENDPOINT_SCOPE[ep.id] ? ` (API-key scope: ${ENDPOINT_SCOPE[ep.id]})` : ''),
+      description:
+        ep.description +
+        (ENDPOINT_SCOPE[ep.id] ? ` (API-key scope: ${ENDPOINT_SCOPE[ep.id]})` : '') +
+        (ep.streaming ? eventsReferenceText() : ''),
       operationId: ep.id,
       security: ep.auth === 'public' || ep.auth === 'webhook' ? [] : [{ bearer: [] }, { cookie: [] }]
     };
@@ -1094,6 +1202,28 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
       op.requestBody = { required: ep.method !== 'GET', content: { 'application/json': { schema } } };
     }
     op.responses = { '200': { description: 'OK' }, '400': { description: 'Bad request' }, '401': { description: 'Unauthorized' } };
+    if (ep.streaming) {
+      // SSE stream by default; JSON delta when ?since is set.
+      op.responses['200'] = {
+        description: 'SSE stream (text/event-stream) of events — or a JSON delta when ?since is set.',
+        content: {
+          'text/event-stream': {
+            schema: { type: 'string' },
+            example: `retry: 5000\n: connected\n\nid: ${EVENT_SAMPLE.id}\nevent: ${EVENT_SAMPLE.type}\ndata: ${JSON.stringify(EVENT_SAMPLE)}\n\n`
+          },
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                events: { type: 'array', items: { $ref: '#/components/schemas/Event' } },
+                cursor: { type: 'string', nullable: true },
+                count: { type: 'integer' }
+              }
+            }
+          }
+        }
+      };
+    }
     paths[oaPath][ep.method.toLowerCase()] = op;
   }
   return {
@@ -1109,6 +1239,23 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
       securitySchemes: {
         bearer: { type: 'http', scheme: 'bearer', bearerFormat: 'fmsk_xxx | jwt' },
         cookie: { type: 'apiKey', in: 'cookie', name: sessionCookieName }
+      },
+      schemas: {
+        Event: {
+          type: 'object',
+          description: 'A realtime feed event (GET /events).',
+          properties: {
+            id: { type: 'string', description: 'Event id — also the resume/?since cursor.' },
+            type: { type: 'string', enum: ALL_EVENT_TYPES, description: 'The kind of event.' },
+            vendorId: { type: 'string' },
+            resourceType: { type: 'string', nullable: true },
+            resourceId: { type: 'string', nullable: true },
+            bucketId: { type: 'string', nullable: true },
+            actorType: { type: 'string', enum: ['apikey', 'user', 'system'] },
+            at: { type: 'string', format: 'date-time' }
+          },
+          example: EVENT_SAMPLE
+        }
       }
     },
     security: [{ bearer: [] }, { cookie: [] }],
