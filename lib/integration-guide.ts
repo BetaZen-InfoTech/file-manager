@@ -19,7 +19,7 @@ export const GUIDE_INTRO =
   'This guide is everything a 3rd-party application needs to integrate with the File Manager API: a REST API for buckets, folders, files, shareable download links, a private file manager, and a real-time event feed. Every call is authenticated with a vendor API key and is automatically scoped to your tenant.';
 
 export const AUTH_PROSE =
-  'Authenticate every request with a vendor API key (it looks like `fmsk_…`). Create one in your vendor dashboard under “API keys” — the secret is shown only once, so store it safely. Send it on every request as a Bearer token (or the `x-api-key` header). Each key carries a set of scopes (permissions) and may optionally be restricted to specific buckets; a request that needs a scope the key doesn’t have is rejected with `403`.';
+  'Authenticate every request with a vendor API key (it looks like `fmsk_…`). Create one in your vendor dashboard under “API keys” — the secret is shown only once, so store it safely. Send it on every request as a Bearer token (or the `x-api-key` header). Each key carries a set of scopes (permissions) and may optionally be restricted to specific buckets; a request that needs a scope the key doesn’t have is rejected with `403`. The SAME key authenticates all three transports — the REST endpoints, the SSE feed (`/events`), and the WebSocket feed (`/ws`) — so one credential drives everything.';
 
 export const SCOPE_PROSE =
   'Every endpoint declares the scope it requires. Grant a key only the scopes it needs. The available scopes:';

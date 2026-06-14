@@ -22,6 +22,7 @@ export interface ApiEndpoint {
   multipart?: boolean;
   body?: Record<string, unknown>; // example JSON body
   streaming?: boolean; // long-lived SSE response (Server-Sent Events)
+  websocket?: boolean; // a WebSocket (wss://) upgrade endpoint
 }
 
 export interface ApiGroup {
@@ -478,6 +479,20 @@ export const API_GROUPS: ApiGroup[] = [
           { name: 'limit', desc: 'Delta page size (1–500, default 100).' },
           { name: 'lastEventId', desc: 'SSE only: resume after this event id (or send the Last-Event-ID header).' }
         ]
+      },
+      {
+        id: 'events-ws',
+        method: 'GET',
+        path: '/ws',
+        summary: 'WebSocket stream',
+        websocket: true,
+        description:
+          'WebSocket (wss://) transport for the SAME realtime feed — for 3rd-party platforms that require WebSocket instead of SSE. Connect to wss://<host>/api/v1/ws with your vendor API key. Auth (any of): the "Authorization: Bearer fmsk_…" or "x-api-key" handshake header, the key as the Sec-WebSocket-Protocol value, or "?api_key=fmsk_…" in the URL (browsers cannot set headers — note query keys can appear in logs). On connect the server sends {"type":"__connected","cursor":"…"}, then one JSON message per event (identical payload + event types as the SSE feed). Resume after a drop by reconnecting with "?since=<cursor>". The server pings every 30s (clients auto-reply). Bucket-scoped keys only receive their buckets events.',
+        auth: 'apikey',
+        query: [
+          { name: 'since', desc: 'Resume: replay events AFTER this cursor (the id of the last event you saw).' },
+          { name: 'api_key', desc: 'API key, for browser clients that cannot set the Authorization header.' }
+        ]
       }
     ]
   },
@@ -737,6 +752,7 @@ export const ENDPOINT_SCOPE: Record<string, string> = {
   'links-revoke': 'publicurl:revoke',
   // Realtime events
   'events-stream': 'events:subscribe',
+  'events-ws': 'events:subscribe',
   // API keys & JWT (account)
   'keys-create': 'apikey:create',
   'keys-revoke': 'apikey:revoke',
@@ -1014,7 +1030,10 @@ export const EVENT_SAMPLE = {
 /** Reference text appended to the Postman/OpenAPI description of the feed. */
 export function eventsReferenceText(): string {
   const lines = EVENT_TYPE_GROUPS.map((g) => `• ${g.group}: ${g.types.map((t) => t.type).join(', ')}`);
-  return `\n\nEvent payload example:\n${JSON.stringify(EVENT_SAMPLE, null, 2)}\n\nEvent types (the \`type\` field):\n${lines.join('\n')}`;
+  return (
+    `\n\nAlso available over WebSocket (same events, same API key): wss://<host>/api/v1/ws — see the Integration Guide.` +
+    `\n\nEvent payload example:\n${JSON.stringify(EVENT_SAMPLE, null, 2)}\n\nEvent types (the \`type\` field):\n${lines.join('\n')}`
+  );
 }
 
 // ---- generators -----------------------------------------------------------
@@ -1052,6 +1071,11 @@ function oaPropSchema(p: ApiBodyParam): Record<string, unknown> {
 
 export function curlFor(ep: ApiEndpoint, baseUrl: string, token: string): string {
   const url = `${baseUrl}${ep.path}`;
+  // WebSocket endpoints aren't curl-able — show a wscat example instead.
+  if (ep.websocket) {
+    const wssUrl = url.replace(/^http/i, 'ws');
+    return [`wscat -c "${wssUrl}" \\`, `  -H "Authorization: Bearer ${token || '<TOKEN>'}"`].join('\n');
+  }
   // -N (no buffering) for an SSE stream so frames print as they arrive.
   const lines = [`curl -X ${ep.method}${ep.streaming ? ' -N' : ''} "${url}"`];
   if (ep.auth !== 'public' && ep.auth !== 'webhook') {
@@ -1086,7 +1110,9 @@ export function postmanCollection(baseUrl: string, token: string) {
     item: VENDOR_API_GROUPS.map((g) => ({
       name: g.name,
       description: g.blurb,
-      item: g.endpoints.map((ep) => {
+      // WebSocket endpoints can't be modelled as HTTP requests — they're
+      // documented in the guide and the docs explorer instead.
+      item: g.endpoints.filter((ep) => !ep.websocket).map((ep) => {
         const segments = ep.path.replace(/^\//, '').split('/');
         const headers: Array<Record<string, string>> = [];
         if (ep.auth !== 'public' && ep.auth !== 'webhook') {
@@ -1202,7 +1228,16 @@ export function openApiSpec(appUrl: string, sessionCookieName: string) {
       op.requestBody = { required: ep.method !== 'GET', content: { 'application/json': { schema } } };
     }
     op.responses = { '200': { description: 'OK' }, '400': { description: 'Bad request' }, '401': { description: 'Unauthorized' } };
-    if (ep.streaming) {
+    if (ep.websocket) {
+      // A WebSocket upgrade — not a normal HTTP operation. Document it as such.
+      op['x-websocket'] = true;
+      op['x-websocket-url'] = `${appUrl.replace(/^http/i, 'ws')}${API_BASE}${ep.path}`;
+      delete op.requestBody;
+      op.responses = {
+        '101': { description: 'Switching Protocols — WebSocket established. Server then pushes JSON event messages.' },
+        '401': { description: 'Unauthorized — missing/invalid API key or events:subscribe scope.' }
+      };
+    } else if (ep.streaming) {
       // SSE stream by default; JSON delta when ?since is set.
       op.responses['200'] = {
         description: 'SSE stream (text/event-stream) of events — or a JSON delta when ?since is set.',

@@ -151,9 +151,20 @@ function TryPanel({
   const [streaming, setStreaming] = useState(false);
   const [frames, setFrames] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // Abort any open stream when switching endpoints / unmounting.
-  useEffect(() => () => abortRef.current?.abort(), [ep.id]);
+  // Close any open stream / socket when switching endpoints or unmounting.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      try {
+        wsRef.current?.close();
+      } catch {
+        /* */
+      }
+    },
+    [ep.id]
+  );
 
   function buildUrl(): string {
     let p = ep.path;
@@ -218,6 +229,36 @@ function TryPanel({
   }
   function stopStream() {
     abortRef.current?.abort();
+    setStreaming(false);
+  }
+
+  // Open a browser WebSocket to the wss endpoint and render messages live. The
+  // browser can't set headers, so the API key is passed as ?api_key=.
+  function connectWs() {
+    setErr(null);
+    setFrames([]);
+    try {
+      const u = new URL(buildUrl());
+      u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
+      if (token) u.searchParams.set('api_key', token);
+      const ws = new WebSocket(u.toString());
+      wsRef.current = ws;
+      setStreaming(true);
+      ws.onopen = () => setFrames((p) => [...p, '/* connected — waiting for events… */']);
+      ws.onmessage = (m) => setFrames((p) => [...p.slice(-99), typeof m.data === 'string' ? m.data : '[binary]']);
+      ws.onerror = () => setErr('WebSocket error — check the token and that the wss:// URL is reachable.');
+      ws.onclose = () => setStreaming(false);
+    } catch (e: any) {
+      setErr(e?.message || 'WebSocket failed.');
+      setStreaming(false);
+    }
+  }
+  function stopWs() {
+    try {
+      wsRef.current?.close();
+    } catch {
+      /* */
+    }
     setStreaming(false);
   }
 
@@ -325,21 +366,21 @@ function TryPanel({
         )
       )}
 
-      {ep.streaming ? (
+      {ep.streaming || ep.websocket ? (
         <>
           <div className="flex items-center gap-2">
             {!streaming ? (
-              <button className="btn" onClick={connectStream}>
-                ▶ Connect stream
+              <button className="btn" onClick={ep.websocket ? connectWs : connectStream}>
+                ▶ {ep.websocket ? 'Connect WebSocket' : 'Connect stream'}
               </button>
             ) : (
-              <button className="btn-danger" onClick={stopStream}>
+              <button className="btn-danger" onClick={ep.websocket ? stopWs : stopStream}>
                 ■ Stop
               </button>
             )}
             {streaming && (
               <span className="flex items-center gap-1.5 text-[11px] text-emerald-300">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> live · {frames.length} event(s)
+                <span className="h-2 w-2 animate-pulse rounded-full bg-emerald-400" /> live · {frames.length} message(s)
               </span>
             )}
           </div>
@@ -352,7 +393,10 @@ function TryPanel({
           {!err && !streaming && frames.length === 0 && (
             <p className="text-[11px] text-gray-500">
               Set your <strong>token</strong> above, then Connect. Trigger an action (e.g. upload a file) in another tab to
-              watch events arrive live. Tip: add <code className="text-gray-400">?since=</code> in the query box for a one-shot JSON delta instead.
+              watch events arrive live.{' '}
+              {ep.websocket
+                ? 'The browser passes your key as ?api_key= (server clients should use the Authorization header instead).'
+                : <>Tip: add <code className="text-gray-400">?since=</code> in the query box for a one-shot JSON delta instead.</>}
             </p>
           )}
         </>
@@ -539,8 +583,18 @@ export default function DocsClient() {
                   ● Streaming (SSE)
                 </span>
               )}
+              {ep.websocket && (
+                <span className="chip border-violet-500/40 text-violet-300" title="WebSocket (wss://) upgrade">
+                  ⇄ WebSocket (WSS)
+                </span>
+              )}
               <span className="chip ml-auto">{AUTH_LABEL[ep.auth]}</span>
             </div>
+            {ep.websocket && (
+              <div className="rounded-md border border-violet-500/30 bg-violet-500/5 px-3 py-2 text-xs text-violet-200">
+                Connect to <code className="break-all text-violet-100">{baseUrl.replace(/^http/i, 'ws')}{ep.path}</code>
+              </div>
+            )}
             <p className="whitespace-pre-line text-sm text-gray-400">{ep.description}</p>
             {ep.auth === 'apikey' && !ENDPOINT_SCOPE[ep.id] && (
               <p className="text-[11px] text-gray-500">Needs any valid API key or session — no specific scope.</p>
@@ -550,7 +604,7 @@ export default function DocsClient() {
             <ParamsBlock ep={ep} />
 
             {/* realtime event reference */}
-            {ep.streaming && <EventReference />}
+            {(ep.streaming || ep.websocket) && <EventReference />}
 
             {/* curl */}
             <div className="space-y-1">
