@@ -447,6 +447,9 @@ export default function DocsClient() {
               aria-label="Token"
             />
           </div>
+          <Link href="/docs/guide" className="btn-secondary flex h-9 items-center px-3 text-xs" title="Full written integration guide">
+            📖 Guide
+          </Link>
           <button className="btn h-9 px-3 text-xs" onClick={downloadPostman}>
             ⬇ Postman
           </button>
