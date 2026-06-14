@@ -349,6 +349,45 @@ await catchUp();
 stream();
 ```
 
+### WebSocket (`wss://`)
+
+The same real-time feed is also available over WebSocket — for 3rd-party platforms that require it. It carries the identical event objects as the SSE feed and uses the same API key (events:subscribe scope). Bucket-scoped keys only receive their buckets’ events.
+
+- **URL:** `wss://cdn.betazeninfotech.com/api/v1/ws`
+- **Auth (handshake):** `Authorization: Bearer fmsk_YOUR_KEY` (or `x-api-key`). Browsers can't set handshake headers — use `?api_key=fmsk_YOUR_KEY` (note: query keys can appear in logs) or pass the key as the `Sec-WebSocket-Protocol`.
+- **On connect** the server sends a hello: `{"type":"__connected","vendorId":"…","cursor":"…"}`, then one JSON message per event (same payload shape as above).
+- **Resume:** reconnect with `?since=<cursor>` (the `id` of the last event you saw) to receive anything missed.
+- **Heartbeat:** the server pings every 30s; standard clients auto-reply. You may also send `{"type":"ping"}` to get `{"type":"pong"}`.
+
+**Node (ws package — server-to-server, header auth)**
+
+```js
+import WebSocket from 'ws';
+const ws = new WebSocket('wss://cdn.betazeninfotech.com/api/v1/ws', {
+  headers: { Authorization: 'Bearer fmsk_YOUR_KEY' }   // or x-api-key
+});
+ws.on('open', () => console.log('connected'));
+ws.on('message', (data) => {
+  const e = JSON.parse(data.toString());
+  if (e.type === '__connected') return;                // hello + resume cursor
+  console.log(e.type, e.resourceId, e.at);
+});
+ws.on('close', () => setTimeout(reconnect, 1000));     // reconnect with ?since=<lastId>
+```
+
+**Browser (headers not allowed — use the query param)**
+
+```js
+const ws = new WebSocket('wss://cdn.betazeninfotech.com/api/v1/ws?api_key=fmsk_YOUR_KEY');
+ws.onmessage = (m) => { const e = JSON.parse(m.data); console.log(e.type); };
+```
+
+**Quick test (wscat)**
+
+```js
+wscat -c "wss://cdn.betazeninfotech.com/api/v1/ws" -H "Authorization: Bearer fmsk_YOUR_KEY"
+```
+
 ---
 
 ## 6. Responses & errors
