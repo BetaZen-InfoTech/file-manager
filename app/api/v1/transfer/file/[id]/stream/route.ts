@@ -25,8 +25,29 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const file: any = await FileModel.findOne(filter).lean();
   if (!file) return notFound('file not found');
 
-  const { stream, contentLength, contentType } = await storage.getObject(file.storageKey);
-  const node = stream as Readable;
+  let got;
+  try {
+    got = await storage.getObject(file.storageKey);
+  } catch (err: any) {
+    const code = err?.$metadata?.httpStatusCode;
+    if (code === 404 || err?.name === 'NoSuchKey' || err?.name === 'NotFound') {
+      // The object is gone from storage (e.g. a shared-DB key repoint). Return a
+      // clean 404 so the caller can distinguish "missing" from a transient fault.
+      return notFound('file object not found in storage');
+    }
+    throw err;
+  }
+  const { contentLength, contentType } = got;
+  const node = got.stream as Readable;
+
+  // If S3 errors mid-stream the headers are already sent — just tear down cleanly.
+  node.on('error', () => {
+    try {
+      node.destroy();
+    } catch {
+      /* ignore */
+    }
+  });
 
   // Destroy the upstream S3 socket if the client disconnects mid-stream.
   req.signal.addEventListener('abort', () => {

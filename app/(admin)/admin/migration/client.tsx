@@ -74,7 +74,13 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
       return;
     }
     if (action === 'test') setMsg(j.ok ? `✓ ${j.message}` : `✗ ${j.message}`);
-    if (action === 'discover') j.ok ? setDiscover({ objects: j.objects, bytes: j.bytes }) : setMsg(`✗ ${j.message}`);
+    if (action === 'discover') {
+      if (!j.ok) setMsg(`✗ ${j.message}`);
+      else {
+        setDiscover({ objects: j.objects, bytes: j.bytes });
+        if (!j.objects) setMsg('⚠ Source reachable but 0 files found — check the URL/token/path before starting.');
+      }
+    }
     if (action === 'start') {
       setJobId(j.id);
       setMsg('Transfer started — it keeps running on the server even if you close this tab.');
@@ -83,11 +89,14 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
 
   async function jobAction(action: 'cancel' | 'resume') {
     if (!jobId) return;
-    await fetch('/api/v1/admin/migration', {
+    const res = await fetch('/api/v1/admin/migration', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ action, id: jobId })
     });
+    const j = await res.json().catch(() => null);
+    if (!res.ok) setMsg(j?.error?.message || `Failed to ${action}.`);
+    else setMsg(`${action === 'cancel' ? 'Cancellation' : 'Resume'} submitted.`);
   }
 
   async function genToken() {

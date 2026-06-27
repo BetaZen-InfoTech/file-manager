@@ -101,6 +101,12 @@ function splitKey(rel: string): { folderPath: string; fileName: string } {
   return { folderPath: parts.join('/'), fileName };
 }
 
+// Resolve (creating as needed) every folder along a RELATIVE path like
+// "a/b/c", returning the leaf folder id. Folder.path stores the PARENT folder's
+// full path (NOT including this folder's own name) — the same convention the
+// app uses (app/api/v1/buckets/[bid]/folders/route.ts), so migrated folders
+// match existing ones instead of duplicating, and full paths resolve correctly.
+// The cache is keyed by each folder's FULL path (with leading slash).
 async function ensureFolderPath(
   vendorId: string,
   bucketId: string,
@@ -111,20 +117,25 @@ async function ensureFolderPath(
   if (!folderPath) return null;
   const segments = folderPath.split('/').filter(Boolean);
   let parentId: string | null = null;
-  let cumulative = '';
+  let parentPath = '/'; // the running parent's full path
+  let fullPath = '';
   for (const seg of segments) {
-    cumulative += `/${seg}`;
-    const cached = cache.get(cumulative);
+    fullPath = parentPath === '/' ? `/${seg}` : `${parentPath}/${seg}`;
+    // Cache key is bucket-scoped: the same path can exist in multiple buckets.
+    const cacheKey = `${bucketId}:${fullPath}`;
+    const cached = cache.get(cacheKey);
     if (cached) {
       parentId = cached;
+      parentPath = fullPath;
       continue;
     }
-    let folder = await Folder.findOne({ vendorId, bucketId, path: cumulative });
+    let folder = await Folder.findOne({ vendorId, bucketId, path: parentPath, name: seg });
     if (!folder) {
-      folder = await Folder.create({ vendorId, bucketId, name: seg, parentId, path: cumulative, createdBy });
+      folder = await Folder.create({ vendorId, bucketId, name: seg, parentId, path: parentPath, createdBy });
     }
     parentId = String(folder._id);
-    cache.set(cumulative, parentId);
+    cache.set(cacheKey, parentId);
+    parentPath = fullPath;
   }
   return parentId;
 }
@@ -136,25 +147,54 @@ async function streamToBuffer(body: unknown): Promise<Buffer> {
   return Buffer.concat(chunks);
 }
 
+// Poll the job's status; if an admin set it to 'cancelled', mark it
+// cancelled/finished and return true so the runner can stop gracefully.
+async function checkCancelled(job: any, jobId: string, stepName: string): Promise<boolean> {
+  const fresh: any = await Migration.findById(jobId).select('status').lean();
+  if (fresh?.status !== 'cancelled') return false;
+  setStep(job, stepName, 'failed', 'cancelled');
+  log(job, 'warn', 'Cancelled by admin.');
+  job.status = 'cancelled';
+  job.finishedAt = new Date();
+  if (typeof job.markModified === 'function') job.markModified('report');
+  await job.save().catch(() => {});
+  return true;
+}
+
 export async function runMigration(jobId: string): Promise<void> {
   await dbConnect();
   // Loosely typed: mongoose InferSchemaType marks nested subdocs (source,
   // totals, done) optional, but they always exist on a created job.
-  const job: any = await Migration.findById(jobId);
-  if (!job || job.status !== 'pending') return;
-
-  job.status = 'running';
-  job.startedAt = new Date();
+  // Atomic claim (same guard as the bcdnp runners): prevents two workers racing
+  // on one job and lets a dead 'running' job be reclaimed after 120s.
+  const claimed: any = await Migration.findOneAndUpdate(
+    {
+      _id: jobId,
+      $or: [{ status: 'pending' }, { status: 'running', heartbeatAt: { $lt: new Date(Date.now() - 120_000) } }]
+    },
+    { $set: { status: 'running', heartbeatAt: new Date() } },
+    { new: true }
+  );
+  if (!claimed) return;
+  const job: any = claimed;
+  if (!job.startedAt) job.startedAt = new Date();
+  // Re-running re-scans the source idempotently; reset counters for accurate totals.
+  job.done = { objects: 0, bytes: 0, skipped: 0, failed: 0 };
   setStep(job, 'connect', 'running');
   await job.save();
 
   try {
     const src = job.source;
+    const accessKey = decryptSecret(src.accessKeyEnc);
+    const secretKey = decryptSecret(src.secretKeyEnc);
+    if (!accessKey || !secretKey) {
+      throw new Error('Failed to decrypt S3 credentials (JWT_SECRET may have changed since the job was created).');
+    }
     const client = s3From({
       endpoint: src.endpoint,
       region: src.region,
-      accessKey: decryptSecret(src.accessKeyEnc),
-      secretKey: decryptSecret(src.secretKeyEnc),
+      accessKey,
+      secretKey,
       forcePathStyle: src.forcePathStyle
     });
     const vendorId = String(job.targetVendorId);
@@ -162,6 +202,8 @@ export async function runMigration(jobId: string): Promise<void> {
     let bucket = await Bucket.findOne({ vendorId, name: job.targetBucketName });
     if (!bucket) bucket = await Bucket.create({ vendorId, name: job.targetBucketName, createdBy: job.createdBy });
     await storage.ensureBucket();
+    // Clear placeholder rows from a prior interrupted run of THIS job.
+    await FileModel.deleteMany({ status: 'uploading', 'metadata.transferJobId': jobId });
     setStep(job, 'connect', 'completed', `target bucket "${bucket.name}"`);
     log(job, 'info', `Connected. Target bucket "${bucket.name}".`);
 
@@ -181,8 +223,23 @@ export async function runMigration(jobId: string): Promise<void> {
     let i = 0;
     for (const obj of objects) {
       i++;
+      if (i % 10 === 0) {
+        if (await checkCancelled(job, jobId, 'copy')) return;
+        job.heartbeatAt = new Date();
+      }
       const rel = obj.Key.slice(prefix.length).replace(/^\/+/, '');
-      if (!rel || obj.Key.endsWith('/')) {
+      if (!rel) {
+        job.done.skipped++;
+        continue;
+      }
+      // A folder-marker object (key ends with '/') is an empty folder in S3 —
+      // create the folder so blank folders survive the migration.
+      if (obj.Key.endsWith('/')) {
+        try {
+          await ensureFolderPath(vendorId, String(bucket._id), rel.replace(/\/+$/, ''), folderCache, job.createdBy);
+        } catch (e) {
+          log(job, 'warn', `Folder marker ${rel}: ${msg(e)}`);
+        }
         job.done.skipped++;
         continue;
       }
@@ -204,7 +261,8 @@ export async function runMigration(jobId: string): Promise<void> {
             mimeType: 'application/octet-stream',
             sizeBytes: 0,
             status: 'uploading',
-            uploadSource: 'api'
+            uploadSource: 'api',
+            metadata: { transferJobId: jobId }
           });
           const got = await client.send(new GetObjectCommand({ Bucket: src.bucket, Key: obj.Key }));
           const buf = await streamToBuffer(got.Body);
@@ -225,18 +283,27 @@ export async function runMigration(jobId: string): Promise<void> {
       }
       job.currentItem = `${i}/${objects.length} · ${rel}`;
       job.progress = Math.round((i / Math.max(1, objects.length)) * 100);
+      job.heartbeatAt = new Date();
       if (i % 5 === 0 || i === objects.length) await job.save();
     }
 
-    // Recompute bucket counters + bump vendor usage.
-    const agg = await FileModel.aggregate([
+    // Recompute bucket + vendor counters from actual ready files ($set, not
+    // $inc — so a re-run can't double-count).
+    const bagg = await FileModel.aggregate([
       { $match: { bucketId: bucket._id, status: 'ready' } },
       { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
     ]);
-    bucket.storageBytes = agg[0]?.bytes || 0;
-    bucket.fileCount = agg[0]?.count || 0;
+    bucket.storageBytes = bagg[0]?.bytes || 0;
+    bucket.fileCount = bagg[0]?.count || 0;
     await bucket.save();
-    await Vendor.updateOne({ _id: vendorId }, { $inc: { 'usage.storageBytes': job.done.bytes, 'usage.fileCount': job.done.objects } });
+    const vagg = await FileModel.aggregate([
+      { $match: { vendorId: new mongoose.Types.ObjectId(vendorId), status: { $in: ['ready', 'trashed'] } } },
+      { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
+    ]);
+    await Vendor.updateOne(
+      { _id: vendorId },
+      { $set: { 'usage.storageBytes': vagg[0]?.bytes || 0, 'usage.fileCount': vagg[0]?.count || 0 } }
+    );
 
     setStep(job, 'copy', 'completed', `${job.done.objects} copied · ${job.done.skipped} skipped · ${job.done.failed} failed`);
     job.status = 'completed';
@@ -318,6 +385,32 @@ async function fetchManifestAll(baseUrl: string, token: string): Promise<Manifes
   return out;
 }
 
+interface FolderEntry {
+  bucketName: string;
+  fullPath: string; // relative, no leading slash, e.g. "a/b/c"
+  name: string;
+  isHidden?: boolean;
+}
+
+// Pull ALL folders (including empty ones) from the source's /transfer/folders
+// endpoint. Returns [] if the source is older and lacks the endpoint (404), so
+// blank-folder transfer degrades gracefully instead of failing the whole job.
+async function fetchFoldersAll(baseUrl: string, token: string): Promise<FolderEntry[]> {
+  const out: FolderEntry[] = [];
+  let after: string | null = null;
+  do {
+    const url = `${normBase(baseUrl)}/api/v1/transfer/folders?limit=1000${after ? `&after=${after}` : ''}`;
+    const r = await fetch(url, { headers: { authorization: `Bearer ${token}` }, redirect: 'manual' });
+    if (r.status === 404) return out; // source predates the folders endpoint
+    if (r.status !== 200) throw new Error(`folders fetch failed (${r.status})`);
+    const j: any = await r.json();
+    for (const f of j.folders || []) out.push(f);
+    after = j.nextAfter || null;
+    if (out.length > 500_000) break;
+  } while (after);
+  return out;
+}
+
 async function ensureBucketByName(
   vendorId: string,
   name: string,
@@ -349,16 +442,20 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
   const job: any = claimed;
   if (!job.startedAt) job.startedAt = new Date();
 
+  // Re-running re-scans the manifest idempotently; reset counters so a resume
+  // can't double-count (vendor usage is recomputed via $set at the end).
+  job.done = { objects: 0, bytes: 0, skipped: 0, failed: 0 };
   setStep(job, 'connect', 'running');
   await job.save();
 
   try {
     const baseUrl = job.bcdnp.baseUrl;
     const token = decryptSecret(job.bcdnp.tokenEnc);
+    if (!token) throw new Error('Failed to decrypt transfer token (JWT_SECRET may have changed since the job was created).');
     const vendorId = String(job.targetVendorId);
     await storage.ensureBucket();
 
-    // Drop placeholder rows from a prior interrupted run (no object written).
+    // Drop placeholder rows from a prior interrupted run of THIS job.
     await FileModel.deleteMany({ status: 'uploading', 'metadata.transferJobId': jobId });
 
     setStep(job, 'connect', 'completed');
@@ -376,6 +473,39 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
 
     const bucketCache = new Map<string, string>();
     const folderCache = new Map<string, string>();
+
+    // Remove orphaned 'uploading' rows for these source files left by ANY prior
+    // run — the File model's unique (vendorId, metadata.sourceFileId) index would
+    // otherwise make re-creating them fail with a duplicate-key error.
+    if (manifest.length) {
+      await FileModel.deleteMany({
+        vendorId,
+        status: 'uploading',
+        'metadata.sourceFileId': { $in: manifest.map((m) => m.id) }
+      });
+    }
+
+    // Transfer folders FIRST (including EMPTY ones) so the directory structure
+    // survives even for folders that contain no files. Shallowest path first so
+    // a parent always exists before its children.
+    try {
+      const folders = await fetchFoldersAll(baseUrl, token);
+      folders.sort(
+        (a, b) => a.fullPath.split('/').filter(Boolean).length - b.fullPath.split('/').filter(Boolean).length
+      );
+      let nf = 0;
+      for (const fo of folders) {
+        if (!fo.fullPath) continue;
+        if (await checkCancelled(job, jobId, 'copy')) return;
+        const bId = await ensureBucketByName(vendorId, fo.bucketName || 'imported', bucketCache, job.createdBy);
+        await ensureFolderPath(vendorId, bId, fo.fullPath, folderCache, job.createdBy);
+        nf++;
+      }
+      if (nf) log(job, 'info', `Ensured ${nf} folders (including empty).`);
+    } catch (e) {
+      log(job, 'warn', `Folder transfer skipped: ${msg(e)}`);
+    }
+
     const startedMs = job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
     let i = 0;
 
@@ -394,11 +524,27 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
 
       const bucketId = await ensureBucketByName(vendorId, entry.bucketName || 'imported', bucketCache, job.createdBy);
 
-      const existing = await FileModel.findOne({ vendorId, 'metadata.sourceFileId': entry.id, status: 'ready' })
-        .select('_id')
+      const existing: any = await FileModel.findOne({ vendorId, 'metadata.sourceFileId': entry.id, status: 'ready' })
+        .select('_id storageKey')
         .lean();
-      if (existing) {
+      const existingHasObject =
+        existing?.storageKey && !String(existing.storageKey).startsWith('migrating-')
+          ? await storage.objectExists(existing.storageKey)
+          : false;
+      if (existing && existingHasObject) {
         job.done.skipped++;
+      } else if (existing && !existingHasObject) {
+        // Row present but bytes missing here (shared DB / interrupted run) →
+        // refill UNDER THE EXISTING key without creating a duplicate record.
+        try {
+          const mime = entry.mimeType || (mimeLookup(entry.originalName) as string) || 'application/octet-stream';
+          await streamSourceFile(baseUrl, token, entry.id, existing.storageKey, entry.sizeBytes, mime);
+          job.done.objects++;
+          job.done.bytes += entry.sizeBytes;
+        } catch (e) {
+          job.done.failed++;
+          log(job, 'error', `Refill ${entry.bucketName}/${entry.originalName}: ${msg(e)}`);
+        }
       } else {
         let file: any = null;
         try {
@@ -488,9 +634,13 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
       ]);
       await Bucket.updateOne({ _id: bId }, { $set: { storageBytes: agg[0]?.bytes || 0, fileCount: agg[0]?.count || 0 } });
     }
+    const vagg = await FileModel.aggregate([
+      { $match: { vendorId: new mongoose.Types.ObjectId(vendorId), status: { $in: ['ready', 'trashed'] } } },
+      { $group: { _id: null, bytes: { $sum: '$sizeBytes' }, count: { $sum: 1 } } }
+    ]);
     await Vendor.updateOne(
       { _id: vendorId },
-      { $inc: { 'usage.storageBytes': job.done.bytes, 'usage.fileCount': job.done.objects } }
+      { $set: { 'usage.storageBytes': vagg[0]?.bytes || 0, 'usage.fileCount': vagg[0]?.count || 0 } }
     );
 
     setStep(job, 'copy', 'completed', `${job.done.objects} copied · ${job.done.skipped} skipped · ${job.done.failed} failed`);
@@ -546,6 +696,8 @@ async function streamSourceFile(
       signal: ctrl.signal
     });
     if (resp.status !== 200 || !resp.body) throw new Error(`stream ${resp.status}`);
+    const enc = (resp.headers.get('content-encoding') || 'identity').toLowerCase();
+    if (enc !== 'identity') throw new Error(`unexpected content-encoding ${enc}`);
     let counted = 0;
     const hash = crypto.createHash('sha256');
     const srcStream = Readable.fromWeb(resp.body as any);
@@ -582,7 +734,11 @@ export async function runFullMigration(jobId: string): Promise<void> {
 
   const baseUrl = job.bcdnp.baseUrl;
   const token = decryptSecret(job.bcdnp.tokenEnc);
-  const R: any = (job.report = job.report || {});
+  // Re-running re-scans every collection idempotently; reset counters so resume
+  // reports accurate per-run totals (authoritative usage is recomputed via $set).
+  job.done = { objects: 0, bytes: 0, skipped: 0, failed: 0 };
+  job.report = {};
+  const R: any = job.report;
   const inc = (a: string, b: string, n = 1) => {
     R[a] = R[a] || {};
     R[a][b] = (R[a][b] || 0) + n;
@@ -600,11 +756,17 @@ export async function runFullMigration(jobId: string): Promise<void> {
   };
 
   try {
+    if (!token) {
+      throw new Error('Failed to decrypt transfer token (JWT_SECRET may have changed since the job was created).');
+    }
     await storage.ensureBucket();
     log(job, 'info', 'Full migration started.');
+    // Clear placeholder rows from a prior interrupted run of THIS job.
+    await FileModel.deleteMany({ status: 'uploading', 'metadata.transferJobId': jobId });
 
     // 1) Vendors — merge by slug.
     await step('vendors', 'running');
+    if (await checkCancelled(job, jobId, 'vendors')) return;
     for await (const v of iterateExport(baseUrl, token, 'vendors')) {
       try {
         const ex = await Vendor.findOne({ slug: v.slug }).select('_id').lean();
@@ -637,6 +799,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
 
     // 2) Buckets — match by (vendor, name).
     await step('buckets', 'running');
+    if (await checkCancelled(job, jobId, 'buckets')) return;
     for await (const b of iterateExport(baseUrl, token, 'buckets')) {
       const vId = vendorMap.get(String(b.vendorId));
       if (!vId) continue;
@@ -658,21 +821,49 @@ export async function runFullMigration(jobId: string): Promise<void> {
     }
     await step('buckets', 'completed', `${R.buckets?.added || 0} added · ${R.buckets?.reused || 0} reused`);
 
-    // 3) Folders — match by (vendor, bucket, path, name). Parent remapped best-effort.
+    // 3) Folders — match by (vendor, bucket, path, name). Collect ALL first and
+    // process shallowest-path first so a parent is always created before its
+    // children (export _id order does NOT guarantee that). Empty folders are
+    // included because we iterate the folders collection, not file paths.
     await step('folders', 'running');
-    for await (const f of iterateExport(baseUrl, token, 'folders')) {
+    if (await checkCancelled(job, jobId, 'folders')) return;
+    const allFolders: any[] = [];
+    for await (const f of iterateExport(baseUrl, token, 'folders')) allFolders.push(f);
+    const depth = (p: string) => (p || '/').split('/').filter(Boolean).length;
+    allFolders.sort((a, b) => depth(a.path) - depth(b.path));
+    for (const f of allFolders) {
       const vId = vendorMap.get(String(f.vendorId));
       const bId = bucketMap.get(String(f.bucketId));
       if (!vId || !bId) continue;
-      const ex = await Folder.findOne({ vendorId: vId, bucketId: bId, path: f.path, name: f.name }).select('_id').lean();
-      if (ex) {
-        folderMap.set(String(f._id), String(ex._id));
-        inc('folders', 'reused');
-      } else {
-        const parentId = f.parentId ? folderMap.get(String(f.parentId)) || null : null;
-        const created = await Folder.create({ vendorId: vId, bucketId: bId, name: f.name, parentId, path: f.path || '/' });
-        folderMap.set(String(f._id), String(created._id));
-        inc('folders', 'added');
+      try {
+        const ex = await Folder.findOne({ vendorId: vId, bucketId: bId, path: f.path, name: f.name })
+          .select('_id')
+          .lean();
+        if (ex) {
+          folderMap.set(String(f._id), String(ex._id));
+          inc('folders', 'reused');
+        } else {
+          let parentId: string | null = null;
+          if (f.parentId) {
+            parentId = folderMap.get(String(f.parentId)) || null;
+            if (!parentId) log(job, 'warn', `Folder "${f.name}": parent not migrated, created at root.`);
+          }
+          const created = await Folder.create({
+            vendorId: vId,
+            bucketId: bId,
+            name: f.name,
+            parentId,
+            path: f.path || '/',
+            isHidden: !!f.isHidden,
+            hiddenBy: f.hiddenBy || null,
+            hiddenAt: f.hiddenAt || null,
+            createdBy: f.createdBy || null
+          });
+          folderMap.set(String(f._id), String(created._id));
+          inc('folders', 'added');
+        }
+      } catch (e) {
+        log(job, 'error', `folder ${f.name}: ${msg(e)}`);
       }
     }
     await step('folders', 'completed', `${R.folders?.added || 0} added · ${R.folders?.reused || 0} reused`);
@@ -682,6 +873,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
     let fi = 0;
     for await (const fl of iterateExport(baseUrl, token, 'files')) {
       fi++;
+      if (fi % 10 === 0 && (await checkCancelled(job, jobId, 'files'))) return;
       const vId = vendorMap.get(String(fl.vendorId));
       const bId = bucketMap.get(String(fl.bucketId));
       if (!vId || !bId) {
@@ -696,21 +888,50 @@ export async function runFullMigration(jobId: string): Promise<void> {
           bucketId: bId,
           folderId: folderId,
           originalName: fl.originalName,
-          sizeBytes: fl.sizeBytes
+          sizeBytes: fl.sizeBytes,
+          status: 'ready'
         }).lean();
         const srcSha = (fl.checksum?.sha256 || '').toLowerCase();
         const mime = fl.mimeType || (mimeLookup(fl.originalName) as string) || 'application/octet-stream';
 
-        if (match && match.checksum?.sha256 && srcSha && match.checksum.sha256.toLowerCase() === srcSha) {
-          fileMap.set(String(fl._id), String(match._id)); // byte-identical
+        const checksumMatch = !!(
+          match && match.checksum?.sha256 && srcSha && match.checksum.sha256.toLowerCase() === srcSha
+        );
+        // A matching DB row does NOT prove the bytes live in THIS server's
+        // storage: with a shared source DB (or an interrupted prior run) the row
+        // exists but the object does not. Verify storage before skipping.
+        let destHasObject = false;
+        if (match && match.storageKey && !String(match.storageKey).startsWith('migrating-')) {
+          destHasObject = await storage.objectExists(match.storageKey);
+        }
+
+        if (match && checksumMatch && destHasObject) {
+          fileMap.set(String(fl._id), String(match._id)); // byte-identical AND present
           inc('files', 'skipped');
-        } else if (match) {
-          // override: stream new bytes to a fresh key, then repoint the file
-          const key = objectKey(vId, bId, String(match._id), `v${Date.now()}-${fl.originalName}`);
-          const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), key, fl.sizeBytes, mime);
+        } else if (match && !destHasObject) {
+          // Bytes missing here → copy them in. Reuse the existing key when it's a
+          // real key (so a shared source DB keeps resolving on the old server);
+          // if it's a leftover 'migrating-' placeholder, write a fresh real key.
+          const useKey =
+            match.storageKey && !String(match.storageKey).startsWith('migrating-')
+              ? match.storageKey
+              : objectKey(vId, bId, String(match._id), fl.originalName);
+          const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), useKey, fl.sizeBytes, mime);
           await FileModel.updateOne(
             { _id: match._id },
-            { $set: { storageKey: key, sizeBytes: fl.sizeBytes, mimeType: mime, checksum: { sha256, md5: '' }, status: 'ready' } }
+            { $set: { storageKey: useKey, sizeBytes: fl.sizeBytes, mimeType: mime, checksum: { sha256, md5: '' }, status: 'ready' } }
+          );
+          fileMap.set(String(fl._id), String(match._id));
+          inc('files', 'restored');
+          inc('files', 'bytes', fl.sizeBytes);
+        } else if (match) {
+          // override: content differs (checksum mismatch) but the object IS
+          // present — overwrite IN PLACE under the existing key so a shared
+          // source DB keeps resolving this file on the old server too.
+          const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), match.storageKey, fl.sizeBytes, mime);
+          await FileModel.updateOne(
+            { _id: match._id },
+            { $set: { sizeBytes: fl.sizeBytes, mimeType: mime, checksum: { sha256, md5: '' }, status: 'ready' } }
           );
           fileMap.set(String(fl._id), String(match._id));
           inc('files', 'overridden');
@@ -728,7 +949,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
             tags: fl.tags || [],
             status: 'uploading',
             uploadSource: 'api',
-            metadata: { ...(fl.metadata || {}), sourceFileId: String(fl._id) }
+            metadata: { ...(fl.metadata || {}), sourceFileId: String(fl._id), transferJobId: jobId }
           });
           const key = objectKey(vId, bId, String(created._id), fl.originalName);
           const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), key, fl.sizeBytes, mime);
@@ -755,6 +976,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
 
     // 5) Users — by email (copy password hash). 6) API keys — by keyHash.
     await step('accounts', 'running');
+    if (await checkCancelled(job, jobId, 'accounts')) return;
     for await (const u of iterateExport(baseUrl, token, 'users')) {
       try {
         if (await User.findOne({ email: u.email }).select('_id').lean()) {
@@ -804,6 +1026,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
 
     // 7) Links — by token (remap fileId).
     await step('links', 'running');
+    if (await checkCancelled(job, jobId, 'links')) return;
     for await (const l of iterateExport(baseUrl, token, 'links')) {
       try {
         const vId = vendorMap.get(String(l.vendorId));
@@ -838,6 +1061,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
 
     // 8) Plans, payments, settings, analytics.
     await step('billing', 'running');
+    if (await checkCancelled(job, jobId, 'billing')) return;
     for await (const pl of iterateExport(baseUrl, token, 'plans')) {
       try {
         if (await Plan.findOne({ code: pl.code }).select('_id').lean()) {

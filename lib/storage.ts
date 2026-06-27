@@ -31,6 +31,7 @@ export interface StorageDriver {
     meta: { mimeType: string }
   ): Promise<PutResult>;
   getObject(key: string): Promise<{ stream: Readable; contentLength?: number; contentType?: string }>;
+  objectExists(key: string): Promise<boolean>;
   deleteObject(key: string): Promise<void>;
   presignedGet(key: string, expirySeconds: number, fileName?: string): Promise<string>;
   initMultipart(key: string, mimeType: string): Promise<string>;
@@ -122,6 +123,22 @@ export const storage: StorageDriver = {
       contentLength: res.ContentLength,
       contentType: res.ContentType
     };
+  },
+
+  // Does the object actually exist in THIS storage? A matching DB row never
+  // guarantees the bytes are here (shared source DB, interrupted prior run, …),
+  // so migration/transfer use this to decide skip-vs-copy. Only a definitive
+  // 404 means "missing"; any other error is rethrown so a transient S3 fault
+  // can't be mistaken for an absent object.
+  async objectExists(key) {
+    try {
+      await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
+      return true;
+    } catch (err: any) {
+      const code = err?.$metadata?.httpStatusCode;
+      if (code === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') return false;
+      throw err;
+    }
   },
 
   async deleteObject(key) {

@@ -67,7 +67,8 @@ export async function POST(req: NextRequest) {
     const stype = (job as any).sourceType;
     if (stype === 'bcdnp-full') void runFullMigration(String(id));
     else if (stype === 'bcdnp') void runBcdnpTransfer(String(id));
-    else void runMigration(String(id));
+    else if (stype === 's3') void runMigration(String(id));
+    else return badRequest('job has an invalid sourceType — cannot resume');
     return jsonOk({ id, status: 'running' });
   }
   if (action === 'cancel') {

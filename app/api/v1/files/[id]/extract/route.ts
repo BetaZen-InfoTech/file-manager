@@ -36,20 +36,26 @@ async function ensureFolderPath(
   cache: Map<string, string>,
   createdBy: any
 ): Promise<string | null> {
+  // Folder.path stores the PARENT's full path (not including this folder's own
+  // name); match/create with the parent path so we reuse the app's folders
+  // instead of duplicating them with malformed paths.
   const segs = rel.split('/').filter(Boolean);
   let parentId: string | null = null;
-  let cum = '';
+  let parentPath = '/';
+  let full = '';
   for (const seg of segs) {
-    cum += `/${seg}`;
-    const c = cache.get(cum);
+    full = parentPath === '/' ? `/${seg}` : `${parentPath}/${seg}`;
+    const c = cache.get(full);
     if (c) {
       parentId = c;
+      parentPath = full;
       continue;
     }
-    let folder = await Folder.findOne({ vendorId, bucketId, path: cum });
-    if (!folder) folder = await Folder.create({ vendorId, bucketId, name: seg, parentId, path: cum, createdBy });
+    let folder = await Folder.findOne({ vendorId, bucketId, path: parentPath, name: seg });
+    if (!folder) folder = await Folder.create({ vendorId, bucketId, name: seg, parentId, path: parentPath, createdBy });
     parentId = String(folder._id);
-    cache.set(cum, parentId);
+    cache.set(full, parentId);
+    parentPath = full;
   }
   return parentId;
 }
