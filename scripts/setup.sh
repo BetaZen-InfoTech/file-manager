@@ -333,7 +333,9 @@ MONGODB_URI=$MONGODB_URI_VALUE
 MONGO_USER=$MONGO_USER_VALUE
 MONGO_PASSWORD=$MONGO_PASSWORD_VALUE
 
-STORAGE_DRIVER=minio
+STORAGE_DRIVER=disk
+STORAGE_DISK_ROOT=/var/www
+# S3_* are only used if STORAGE_DRIVER=s3/minio, or for "Import from S3" migration.
 S3_ENDPOINT=http://127.0.0.1:9000
 S3_REGION=us-east-1
 S3_ACCESS_KEY=$S3_ACCESS_KEY
@@ -397,7 +399,7 @@ else
 fi
 
 # ============================================================================
-# 8. Infra (Mongo + MinIO) via docker compose
+# 8. Infra (MongoDB) via docker compose + disk storage dir
 # ============================================================================
 if [[ "${DO_RESET:-0}" == "1" ]]; then
   warn "--reset: tearing down volumes too"
@@ -405,7 +407,7 @@ if [[ "${DO_RESET:-0}" == "1" ]]; then
 fi
 
 if [[ "$USE_LOCAL_MONGO" == "1" ]]; then
-  step "Starting Mongo + MinIO via docker compose"
+  step "Starting MongoDB via docker compose"
   docker compose -f "$APP_DIR/docker-compose.yml" up -d >/dev/null
   info "Waiting for Mongo to accept connections..."
   for i in $(seq 1 30); do
@@ -420,21 +422,14 @@ if [[ "$USE_LOCAL_MONGO" == "1" ]]; then
     sleep 2
   done
 else
-  step "Using external MongoDB — starting MinIO only"
+  step "Using external MongoDB — no local containers needed"
   info "MONGODB_URI points off-box; the bundled Mongo container is skipped."
-  docker compose -f "$APP_DIR/docker-compose.yml" up -d minio >/dev/null
 fi
 
-# Wait for MinIO
-info "Waiting for MinIO..."
-for i in $(seq 1 30); do
-  if curl -fsS --max-time 2 http://127.0.0.1:9000/minio/health/live >/dev/null 2>&1; then
-    ok "MinIO healthy"
-    break
-  fi
-  [[ $i -eq 30 ]] && { err "MinIO didn't start in 60s."; exit 1; }
-  sleep 2
-done
+# Disk storage: files live on the local filesystem (no S3/MinIO). Ensure the root.
+STORAGE_DISK_ROOT_VALUE="${STORAGE_DISK_ROOT:-/var/www}"
+mkdir -p "$STORAGE_DISK_ROOT_VALUE/vendors"
+ok "Disk storage ready at $STORAGE_DISK_ROOT_VALUE/vendors"
 
 # ============================================================================
 # 9. npm deps + tests + build

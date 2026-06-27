@@ -12,7 +12,12 @@ import {
   AbortMultipartUploadCommand
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
+import fs from 'fs';
+import fsp from 'fs/promises';
+import nodePath from 'path';
+import crypto from 'crypto';
 import { Readable } from 'stream';
+import { pipeline } from 'stream/promises';
 import { env } from './env';
 
 export interface PutResult {
@@ -44,7 +49,19 @@ export interface StorageDriver {
   abortMultipart(key: string, uploadId: string): Promise<void>;
 }
 
-function makeS3(): { client: S3Client; bucket: string } {
+// A "not found" error shaped like the AWS SDK's so callers that branch on
+// `$metadata.httpStatusCode === 404` / name `NoSuchKey` work for BOTH drivers.
+function notFoundErr(key: string): Error {
+  const e: any = new Error(`object not found: ${key}`);
+  e.name = 'NoSuchKey';
+  e.$metadata = { httpStatusCode: 404 };
+  return e;
+}
+
+// ===========================================================================
+// S3 / MinIO driver
+// ===========================================================================
+function makeS3Storage(): StorageDriver {
   const client = new S3Client({
     region: env.S3_REGION,
     endpoint: env.S3_ENDPOINT,
@@ -55,147 +72,248 @@ function makeS3(): { client: S3Client; bucket: string } {
     forcePathStyle: env.S3_FORCE_PATH_STYLE,
     // CRITICAL for putObjectStream: newer AWS SDK v3 defaults to computing a
     // request checksum, which forces a streamed Readable body into an
-    // `aws-chunked` / STREAMING-UNSIGNED-PAYLOAD-TRAILER encoding that DROPS
-    // Content-Length — MinIO rejects that. WHEN_REQUIRED skips it so a raw
-    // Readable streams with a literal Content-Length. (Buffer puts are
-    // unaffected.) Unknown keys are ignored by older SDKs, so this is safe.
+    // `aws-chunked` encoding that DROPS Content-Length — MinIO rejects that.
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED'
   } as any);
-  return { client, bucket: env.S3_DEFAULT_BUCKET };
-}
+  const bucket = env.S3_DEFAULT_BUCKET;
 
-const s3 = makeS3();
+  return {
+    driver: env.STORAGE_DRIVER,
 
-export const storage: StorageDriver = {
-  driver: env.STORAGE_DRIVER,
-
-  async ensureBucket() {
-    try {
-      await s3.client.send(new HeadBucketCommand({ Bucket: s3.bucket }));
-    } catch {
+    async ensureBucket() {
       try {
-        await s3.client.send(new CreateBucketCommand({ Bucket: s3.bucket }));
-      } catch (err: any) {
-        if (err?.name !== 'BucketAlreadyOwnedByYou' && err?.name !== 'BucketAlreadyExists') {
-          throw err;
+        await client.send(new HeadBucketCommand({ Bucket: bucket }));
+      } catch {
+        try {
+          await client.send(new CreateBucketCommand({ Bucket: bucket }));
+        } catch (err: any) {
+          if (err?.name !== 'BucketAlreadyOwnedByYou' && err?.name !== 'BucketAlreadyExists') throw err;
         }
       }
+    },
+
+    async putObject(key, body, meta) {
+      const res = await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body as Buffer,
+          ContentType: meta.mimeType,
+          ContentLength: body.byteLength
+        })
+      );
+      return { etag: res.ETag || '', size: body.byteLength };
+    },
+
+    async putObjectStream(key, body, contentLength, meta) {
+      await client.send(
+        new PutObjectCommand({
+          Bucket: bucket,
+          Key: key,
+          Body: body,
+          ContentLength: contentLength,
+          ContentType: meta.mimeType
+        })
+      );
+      const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      if (typeof head.ContentLength === 'number' && head.ContentLength !== contentLength) {
+        throw new Error(`stored size ${head.ContentLength} != expected ${contentLength}`);
+      }
+      return { etag: head.ETag || '', size: contentLength };
+    },
+
+    async getObject(key) {
+      const res = await client.send(new GetObjectCommand({ Bucket: bucket, Key: key }));
+      return {
+        stream: res.Body as Readable,
+        contentLength: res.ContentLength,
+        contentType: res.ContentType
+      };
+    },
+
+    async objectExists(key) {
+      try {
+        await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+        return true;
+      } catch (err: any) {
+        const code = err?.$metadata?.httpStatusCode;
+        if (code === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') return false;
+        throw err;
+      }
+    },
+
+    async deleteObject(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+    },
+
+    async presignedGet(key, expirySeconds, fileName) {
+      const cmd = new GetObjectCommand({
+        Bucket: bucket,
+        Key: key,
+        ...(fileName
+          ? { ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"` }
+          : {})
+      });
+      return getSignedUrl(client, cmd, { expiresIn: expirySeconds });
+    },
+
+    async initMultipart(key, mimeType) {
+      const res = await client.send(
+        new CreateMultipartUploadCommand({ Bucket: bucket, Key: key, ContentType: mimeType })
+      );
+      return res.UploadId || '';
+    },
+
+    async uploadPart(key, uploadId, partNumber, body) {
+      const res = await client.send(
+        new UploadPartCommand({ Bucket: bucket, Key: key, UploadId: uploadId, PartNumber: partNumber, Body: body })
+      );
+      return res.ETag || '';
+    },
+
+    async completeMultipart(key, uploadId, parts) {
+      await client.send(
+        new CompleteMultipartUploadCommand({
+          Bucket: bucket,
+          Key: key,
+          UploadId: uploadId,
+          MultipartUpload: { Parts: parts }
+        })
+      );
+      const head = await client.send(new HeadObjectCommand({ Bucket: bucket, Key: key }));
+      return { size: typeof head.ContentLength === 'number' ? head.ContentLength : 0 };
+    },
+
+    async abortMultipart(key, uploadId) {
+      await client.send(new AbortMultipartUploadCommand({ Bucket: bucket, Key: key, UploadId: uploadId }));
     }
-  },
+  };
+}
 
-  async putObject(key, body, meta) {
-    const res = await s3.client.send(
-      new PutObjectCommand({
-        Bucket: s3.bucket,
-        Key: key,
-        Body: body as Buffer,
-        ContentType: meta.mimeType,
-        ContentLength: body.byteLength
-      })
-    );
-    return { etag: res.ETag || '', size: body.byteLength };
-  },
+// ===========================================================================
+// Disk driver — stores objects on the local filesystem under STORAGE_DISK_ROOT.
+// The object key IS the path under the root, so with the default root /var/www
+// a key "vendors/<vendorId>/buckets/<bucketId>/<fileId>/<name>" lands at
+// /var/www/vendors/<vendorId>/... . No S3/MinIO required.
+// ===========================================================================
+function makeDiskStorage(): StorageDriver {
+  const ROOT = nodePath.resolve(env.STORAGE_DISK_ROOT);
+  const STAGING = nodePath.join(ROOT, '.fm-multipart');
 
-  // Stream an object in with a KNOWN content length (no buffering, no temp
-  // file). Used by server-to-server transfer. Verifies the stored size after.
-  async putObjectStream(key, body, contentLength, meta) {
-    await s3.client.send(
-      new PutObjectCommand({
-        Bucket: s3.bucket,
-        Key: key,
-        Body: body,
-        ContentLength: contentLength,
-        ContentType: meta.mimeType
-      })
-    );
-    const head = await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
-    if (typeof head.ContentLength === 'number' && head.ContentLength !== contentLength) {
-      throw new Error(`stored size ${head.ContentLength} != expected ${contentLength}`);
-    }
-    return { etag: head.ETag || '', size: contentLength };
-  },
-
-  async getObject(key) {
-    const res = await s3.client.send(new GetObjectCommand({ Bucket: s3.bucket, Key: key }));
-    return {
-      stream: res.Body as Readable,
-      contentLength: res.ContentLength,
-      contentType: res.ContentType
-    };
-  },
-
-  // Does the object actually exist in THIS storage? A matching DB row never
-  // guarantees the bytes are here (shared source DB, interrupted prior run, …),
-  // so migration/transfer use this to decide skip-vs-copy. Only a definitive
-  // 404 means "missing"; any other error is rethrown so a transient S3 fault
-  // can't be mistaken for an absent object.
-  async objectExists(key) {
-    try {
-      await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
-      return true;
-    } catch (err: any) {
-      const code = err?.$metadata?.httpStatusCode;
-      if (code === 404 || err?.name === 'NotFound' || err?.name === 'NoSuchKey') return false;
-      throw err;
-    }
-  },
-
-  async deleteObject(key) {
-    await s3.client.send(new DeleteObjectCommand({ Bucket: s3.bucket, Key: key }));
-  },
-
-  async presignedGet(key, expirySeconds, fileName) {
-    const cmd = new GetObjectCommand({
-      Bucket: s3.bucket,
-      Key: key,
-      ...(fileName
-        ? { ResponseContentDisposition: `attachment; filename="${encodeURIComponent(fileName)}"` }
-        : {})
-    });
-    return getSignedUrl(s3.client, cmd, { expiresIn: expirySeconds });
-  },
-
-  async initMultipart(key, mimeType) {
-    const res = await s3.client.send(
-      new CreateMultipartUploadCommand({ Bucket: s3.bucket, Key: key, ContentType: mimeType })
-    );
-    return res.UploadId || '';
-  },
-
-  async uploadPart(key, uploadId, partNumber, body) {
-    const res = await s3.client.send(
-      new UploadPartCommand({
-        Bucket: s3.bucket,
-        Key: key,
-        UploadId: uploadId,
-        PartNumber: partNumber,
-        Body: body
-      })
-    );
-    return res.ETag || '';
-  },
-
-  async completeMultipart(key, uploadId, parts) {
-    await s3.client.send(
-      new CompleteMultipartUploadCommand({
-        Bucket: s3.bucket,
-        Key: key,
-        UploadId: uploadId,
-        MultipartUpload: { Parts: parts }
-      })
-    );
-    // Return the authoritative stored size so callers don't trust a client value.
-    const head = await s3.client.send(new HeadObjectCommand({ Bucket: s3.bucket, Key: key }));
-    return { size: typeof head.ContentLength === 'number' ? head.ContentLength : 0 };
-  },
-
-  async abortMultipart(key, uploadId) {
-    await s3.client.send(
-      new AbortMultipartUploadCommand({ Bucket: s3.bucket, Key: key, UploadId: uploadId })
-    );
+  // Map a key to an absolute path, jailed inside ROOT (rejects traversal).
+  function diskPath(key: string): string {
+    if (!key || key.includes('\0')) throw new Error('invalid storage key');
+    const abs = nodePath.resolve(ROOT, key.replace(/^\/+/, ''));
+    if (abs !== ROOT && !abs.startsWith(ROOT + nodePath.sep)) throw new Error('storage key escapes root');
+    return abs;
   }
-};
+  const stageDir = (uploadId: string) => nodePath.join(STAGING, uploadId.replace(/[^a-zA-Z0-9]/g, ''));
+  const partFile = (uploadId: string, n: number) => nodePath.join(stageDir(uploadId), String(n).padStart(6, '0'));
+
+  return {
+    driver: 'disk',
+
+    async ensureBucket() {
+      await fsp.mkdir(ROOT, { recursive: true });
+    },
+
+    async putObject(key, body, _meta) {
+      const fp = diskPath(key);
+      await fsp.mkdir(nodePath.dirname(fp), { recursive: true });
+      const buf = Buffer.isBuffer(body) ? body : Buffer.from(body);
+      await fsp.writeFile(fp, buf);
+      return { etag: crypto.createHash('md5').update(buf).digest('hex'), size: buf.byteLength };
+    },
+
+    async putObjectStream(key, body, contentLength, _meta) {
+      const fp = diskPath(key);
+      await fsp.mkdir(nodePath.dirname(fp), { recursive: true });
+      await pipeline(body, fs.createWriteStream(fp));
+      const st = await fsp.stat(fp);
+      if (typeof contentLength === 'number' && contentLength > 0 && st.size !== contentLength) {
+        throw new Error(`stored size ${st.size} != expected ${contentLength}`);
+      }
+      return { etag: '', size: st.size };
+    },
+
+    async getObject(key) {
+      const fp = diskPath(key);
+      let st: fs.Stats;
+      try {
+        st = await fsp.stat(fp);
+      } catch (e: any) {
+        if (e?.code === 'ENOENT') throw notFoundErr(key);
+        throw e;
+      }
+      return { stream: fs.createReadStream(fp), contentLength: st.size, contentType: undefined };
+    },
+
+    async objectExists(key) {
+      try {
+        await fsp.access(diskPath(key));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+
+    async deleteObject(key) {
+      await fsp.rm(diskPath(key), { force: true }).catch(() => {});
+    },
+
+    async presignedGet() {
+      // Disk has no presigned URLs; callers stream through the app (getObject).
+      throw new Error('presignedGet is not supported by the disk storage driver');
+    },
+
+    async initMultipart(_key, _mimeType) {
+      const uploadId = crypto.randomBytes(16).toString('hex');
+      await fsp.mkdir(stageDir(uploadId), { recursive: true });
+      return uploadId;
+    },
+
+    async uploadPart(_key, uploadId, partNumber, body) {
+      const pf = partFile(uploadId, partNumber);
+      await fsp.mkdir(nodePath.dirname(pf), { recursive: true });
+      await fsp.writeFile(pf, body);
+      return crypto.createHash('md5').update(body).digest('hex');
+    },
+
+    async completeMultipart(key, uploadId, parts) {
+      const fp = diskPath(key);
+      await fsp.mkdir(nodePath.dirname(fp), { recursive: true });
+      const ordered = [...parts].sort((a, b) => a.PartNumber - b.PartNumber);
+      const ws = fs.createWriteStream(fp);
+      try {
+        for (const p of ordered) {
+          await new Promise<void>((resolve, reject) => {
+            const rs = fs.createReadStream(partFile(uploadId, p.PartNumber));
+            rs.on('error', reject);
+            rs.on('end', resolve);
+            rs.pipe(ws, { end: false });
+          });
+        }
+      } finally {
+        await new Promise<void>((resolve, reject) => {
+          ws.end();
+          ws.on('finish', () => resolve());
+          ws.on('error', reject);
+        });
+      }
+      await fsp.rm(stageDir(uploadId), { recursive: true, force: true }).catch(() => {});
+      const st = await fsp.stat(fp);
+      return { size: st.size };
+    },
+
+    async abortMultipart(_key, uploadId) {
+      await fsp.rm(stageDir(uploadId), { recursive: true, force: true }).catch(() => {});
+    }
+  };
+}
+
+export const storage: StorageDriver =
+  env.STORAGE_DRIVER === 'disk' ? makeDiskStorage() : makeS3Storage();
 
 export function objectKey(
   vendorId: string,

@@ -222,20 +222,27 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   //   /var/www/vendors/<username>/<bucketName>/<path>/<filename>
   // Best-effort and jailed — a filesystem error never fails the API upload.
   let mirroredPath: string | null = null;
-  try {
-    const vendor = await Vendor.findById(p.vendorId).select('username').lean();
-    const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
-    const cleanPath = pathField.replace(/^\/+|\/+$/g, '');
-    const fileName = (originalName.split(/[\\/]/).pop() || 'file').replace(/[^\w.\-]/g, '_');
-    const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
-    const dest = resolveInJail(home, rel);
-    if (dest) {
-      await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
-      await fsp.writeFile(dest, buf);
-      mirroredPath = rel;
+  if (storage.driver === 'disk') {
+    // Disk storage already wrote the file under STORAGE_DISK_ROOT/<storageKey>
+    // (e.g. /var/www/vendors/<vendorId>/...). A second human-readable mirror
+    // would only duplicate it on disk, so we skip it and report the real path.
+    mirroredPath = '/' + storageKeyToUse;
+  } else {
+    try {
+      const vendor = await Vendor.findById(p.vendorId).select('username').lean();
+      const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
+      const cleanPath = pathField.replace(/^\/+|\/+$/g, '');
+      const fileName = (originalName.split(/[\\/]/).pop() || 'file').replace(/[^\w.\-]/g, '_');
+      const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
+      const dest = resolveInJail(home, rel);
+      if (dest) {
+        await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
+        await fsp.writeFile(dest, buf);
+        mirroredPath = rel;
+      }
+    } catch (e) {
+      console.error('fs mirror failed', e);
     }
-  } catch (e) {
-    console.error('fs mirror failed', e);
   }
 
   // Quota warning email at 80% (fire-and-forget; only once per crossing — best-effort)

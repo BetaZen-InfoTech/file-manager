@@ -31,7 +31,10 @@ export const env = {
 
   MONGODB_URI: required('MONGODB_URI', 'mongodb://127.0.0.1:27017/filemanager'),
 
-  STORAGE_DRIVER: (process.env.STORAGE_DRIVER || 'minio') as 'minio' | 's3' | 'disk',
+  STORAGE_DRIVER: (process.env.STORAGE_DRIVER || 'disk') as 'minio' | 's3' | 'disk',
+  // Disk driver: filesystem root that object keys are stored under. With the
+  // default, files land at /var/www/vendors/<vendorId>/buckets/<bucketId>/<fileId>/<name>.
+  STORAGE_DISK_ROOT: process.env.STORAGE_DISK_ROOT || '/var/www',
   S3_ENDPOINT: process.env.S3_ENDPOINT || 'http://127.0.0.1:9000',
   S3_REGION: process.env.S3_REGION || 'us-east-1',
   S3_ACCESS_KEY: process.env.S3_ACCESS_KEY || 'minioadmin',

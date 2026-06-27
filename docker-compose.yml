@@ -15,24 +15,8 @@ services:
       timeout: 5s
       retries: 5
 
-  minio:
-    image: minio/minio
-    restart: always
-    command: server /data --console-address ":9001"
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
-    environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minioadminstrongpass}
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
+# Storage is on the local filesystem (STORAGE_DRIVER=disk) — no MinIO/S3 needed.
+# To use S3/MinIO instead, set STORAGE_DRIVER=s3 in .env and run your own store.
 
 volumes:
   mongo_data: {}
-  minio_data: {}
