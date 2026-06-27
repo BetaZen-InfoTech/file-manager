@@ -19,6 +19,14 @@ export const env = {
     'dev-session-secret-change-me-in-production-please'
   ),
   SESSION_COOKIE_NAME: process.env.SESSION_COOKIE_NAME || 'fms_session',
+  // Whether the session cookie carries the `Secure` flag. Secure cookies are
+  // ONLY stored by browsers over HTTPS — so an HTTP-only deploy (bare IP / no
+  // TLS) must set COOKIE_SECURE=false or login silently fails (cookie dropped).
+  // When unset, defaults to Secure in production (the safe default for HTTPS).
+  COOKIE_SECURE:
+    (process.env.COOKIE_SECURE && process.env.COOKIE_SECURE.length > 0
+      ? process.env.COOKIE_SECURE
+      : process.env.NODE_ENV === 'production' ? 'true' : 'false') === 'true',
   SESSION_TTL_HOURS: Number(process.env.SESSION_TTL_HOURS || 12),
 
   MONGODB_URI: required('MONGODB_URI', 'mongodb://127.0.0.1:27017/filemanager'),
