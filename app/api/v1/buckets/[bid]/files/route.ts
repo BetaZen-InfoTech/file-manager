@@ -17,6 +17,7 @@ import {
 } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { storage, objectKey } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { safeSearchRegExp } from '@/lib/search';
 import { md5, sha256 } from '@/lib/crypto';
@@ -143,9 +144,10 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   const extension = (originalName.split('.').pop() || '').toLowerCase();
 
   await storage.ensureBucket();
+  const vendorKey = await vendorFolderKeyById(p.vendorId);
   const fileIdObj = new mongoose.Types.ObjectId();
   let storageKeyToUse = objectKey(
-    p.vendorId,
+    vendorKey,
     String(bucket._id),
     String(fileIdObj),
     originalName

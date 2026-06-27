@@ -5,6 +5,7 @@ import { lookup as mimeLookup } from 'mime-types';
 import mongoose from 'mongoose';
 import { dbConnect } from './db';
 import { storage, objectKey } from './storage';
+import { vendorFolderKeyById } from './vendor-folder';
 import { decryptSecret, encryptSecret } from './crypto';
 import { Migration, MigrationDoc } from '@/models/Migration';
 import { Bucket } from '@/models/Bucket';
@@ -267,7 +268,7 @@ export async function runMigration(jobId: string): Promise<void> {
           const got = await client.send(new GetObjectCommand({ Bucket: src.bucket, Key: obj.Key }));
           const buf = await streamToBuffer(got.Body);
           const mime = got.ContentType || mimeLookup(fileName) || 'application/octet-stream';
-          const key = objectKey(vendorId, String(bucket._id), String(file._id), fileName);
+          const key = objectKey(await vendorFolderKeyById(vendorId), String(bucket._id), String(file._id), fileName);
           await storage.putObject(key, buf, { mimeType: mime });
           file.storageKey = key;
           file.sizeBytes = buf.byteLength;
@@ -589,7 +590,7 @@ export async function runBcdnpTransfer(jobId: string): Promise<void> {
             srcStream.pipe(counter);
 
             const mime = entry.mimeType || (mimeLookup(entry.originalName) as string) || 'application/octet-stream';
-            const key = objectKey(vendorId, bucketId, String(file._id), entry.originalName);
+            const key = objectKey(await vendorFolderKeyById(vendorId), bucketId, String(file._id), entry.originalName);
             await storage.putObjectStream(key, counter, entry.sizeBytes, { mimeType: mime });
 
             if (counted !== entry.sizeBytes) throw new Error(`size mismatch ${counted} != ${entry.sizeBytes}`);
@@ -915,7 +916,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
           const useKey =
             match.storageKey && !String(match.storageKey).startsWith('migrating-')
               ? match.storageKey
-              : objectKey(vId, bId, String(match._id), fl.originalName);
+              : objectKey(await vendorFolderKeyById(vId), bId, String(match._id), fl.originalName);
           const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), useKey, fl.sizeBytes, mime);
           await FileModel.updateOne(
             { _id: match._id },
@@ -951,7 +952,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
             uploadSource: 'api',
             metadata: { ...(fl.metadata || {}), sourceFileId: String(fl._id), transferJobId: jobId }
           });
-          const key = objectKey(vId, bId, String(created._id), fl.originalName);
+          const key = objectKey(await vendorFolderKeyById(vId), bId, String(created._id), fl.originalName);
           const { sha256 } = await streamSourceFile(baseUrl, token, String(fl._id), key, fl.sizeBytes, mime);
           await FileModel.updateOne(
             { _id: created._id },

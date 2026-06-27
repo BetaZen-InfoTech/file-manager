@@ -8,6 +8,7 @@ import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, 
 import { audit } from '@/lib/audit';
 import { archiveSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
 import { FileModel } from '@/models/File';
@@ -101,8 +102,9 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
     folderId = t?._id || null;
   }
   await storage.ensureBucket();
+  const vendorKey = await vendorFolderKeyById(p.vendorId);
   const id = new mongoose.Types.ObjectId();
-  const key = objectKey(p.vendorId, String(bucket._id), String(id), zipName);
+  const key = objectKey(vendorKey, String(bucket._id), String(id), zipName);
   await storage.putObject(key, zipBuf, { mimeType: 'application/zip' });
 
   const doc = await FileModel.create({

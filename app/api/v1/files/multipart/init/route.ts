@@ -15,6 +15,7 @@ import {
 } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { storage, objectKey } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota } from '@/lib/quota';
 import { multipartInitSchema } from '@/lib/validation';
 import { env } from '@/lib/env';
@@ -62,8 +63,9 @@ export async function POST(req: NextRequest) {
   }
 
   await storage.ensureBucket();
+  const vendorKey = await vendorFolderKeyById(p.vendorId);
   const fileIdObj = new mongoose.Types.ObjectId();
-  const key = objectKey(p.vendorId, body.bucketId, String(fileIdObj), body.originalName);
+  const key = objectKey(vendorKey, body.bucketId, String(fileIdObj), body.originalName);
   const uploadId = await storage.initMultipart(key, body.mimeType);
   const draft = await FileModel.create({
     _id: fileIdObj,

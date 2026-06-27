@@ -10,6 +10,7 @@ import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, 
 import { audit } from '@/lib/audit';
 import { extractSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
 import { FileModel } from '@/models/File';
@@ -100,6 +101,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!quota.ok) return quotaExceeded();
 
   await storage.ensureBucket();
+  const vendorKey = await vendorFolderKeyById(String(p.vendorId));
   const cache = new Map<string, string>();
   let created = 0;
   let addedBytes = 0;
@@ -115,7 +117,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       const content: Buffer = await entry.buffer();
       const detectedMime = (mime.lookup(name) as string) || 'application/octet-stream';
       const id = new mongoose.Types.ObjectId();
-      const key = objectKey(String(p.vendorId), String(zip.bucketId), String(id), name);
+      const key = objectKey(vendorKey, String(zip.bucketId), String(id), name);
       await storage.putObject(key, content, { mimeType: detectedMime });
       await FileModel.create({
         _id: id,

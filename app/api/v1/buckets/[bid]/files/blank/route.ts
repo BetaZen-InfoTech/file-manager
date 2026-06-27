@@ -8,6 +8,7 @@ import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, 
 import { audit } from '@/lib/audit';
 import { blankFileSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
 import { vendorHome, resolveInJail, vendorFolderKey } from '@/lib/server-fs';
@@ -52,8 +53,9 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!quota.ok) return quotaExceeded();
 
   await storage.ensureBucket();
+  const vendorKey = await vendorFolderKeyById(p.vendorId);
   const id = new mongoose.Types.ObjectId();
-  const key = objectKey(p.vendorId, String(bucket._id), String(id), name);
+  const key = objectKey(vendorKey, String(bucket._id), String(id), name);
   await storage.putObject(key, buf, { mimeType: detectedMime });
 
   const doc = await FileModel.create({
@@ -77,22 +79,27 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
     Bucket.updateOne({ _id: bucket._id }, { $inc: { storageBytes: size, fileCount: 1 } })
   ]);
 
-  // Mirror onto the vendor's server folder so it shows in the file manager.
+  // Disk storage already writes the file under <root>/<storageKey>; only the
+  // S3/MinIO driver needs the human-readable mirror for the File Manager.
   let serverPath: string | null = null;
-  try {
-    const vendor = await Vendor.findById(p.vendorId).select('username').lean();
-    const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
-    const cleanPath = String((parsed.data as any).path || '/').replace(/^\/+|\/+$/g, '');
-    const fileName = name.split(/[\\/]/).pop()!.replace(/[^\w.\-]/g, '_');
-    const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
-    const dest = resolveInJail(home, rel);
-    if (dest) {
-      await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
-      await fsp.writeFile(dest, buf);
-      serverPath = rel;
+  if (storage.driver === 'disk') {
+    serverPath = '/' + key;
+  } else {
+    try {
+      const vendor = await Vendor.findById(p.vendorId).select('username').lean();
+      const home = await vendorHome(vendorFolderKey({ username: (vendor as any)?.username, _id: p.vendorId }));
+      const cleanPath = String((parsed.data as any).path || '/').replace(/^\/+|\/+$/g, '');
+      const fileName = name.split(/[\\/]/).pop()!.replace(/[^\w.\-]/g, '_');
+      const rel = '/' + [bucket.name, cleanPath, fileName].filter(Boolean).join('/');
+      const dest = resolveInJail(home, rel);
+      if (dest) {
+        await fsp.mkdir(nodePath.dirname(dest), { recursive: true });
+        await fsp.writeFile(dest, buf);
+        serverPath = rel;
+      }
+    } catch (e) {
+      console.error('fs mirror failed', e);
     }
-  } catch (e) {
-    console.error('fs mirror failed', e);
   }
 
   await audit(p, req, { action: 'file.create', resourceType: 'file', resourceId: String(doc._id), meta: { name } });

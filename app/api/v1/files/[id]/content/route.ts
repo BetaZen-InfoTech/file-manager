@@ -7,6 +7,7 @@ import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, 
 import { audit } from '@/lib/audit';
 import { editContentSchema } from '@/lib/validation';
 import { storage } from '@/lib/storage';
+import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
 import { FileModel } from '@/models/File';
@@ -86,7 +87,8 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   await storage.ensureBucket();
   // Write to a NEW key (don't overwrite a possibly-shared/deduped object).
   const safe = file.originalName.replace(/[^\w.\-]/g, '_');
-  const newKey = `vendors/${p.vendorId}/buckets/${file.bucketId}/${file._id}/v${Date.now()}-${safe}`;
+  const vendorKey = await vendorFolderKeyById(p.vendorId);
+  const newKey = `vendors/${vendorKey}/buckets/${file.bucketId}/${file._id}/v${Date.now()}-${safe}`;
   await storage.putObject(newKey, buf, { mimeType: file.mimeType });
 
   file.storageKey = newKey;

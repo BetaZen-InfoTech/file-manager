@@ -315,12 +315,15 @@ function makeDiskStorage(): StorageDriver {
 export const storage: StorageDriver =
   env.STORAGE_DRIVER === 'disk' ? makeDiskStorage() : makeS3Storage();
 
+// vendorKey is the vendor's FOLDER key (username, or vendorId for legacy vendors
+// without a username) — see lib/vendor-folder.ts. So objects live at
+//   <root>/vendors/<username>/buckets/<bucketId>/<fileId>/<name>
 export function objectKey(
-  vendorId: string,
+  vendorKey: string,
   bucketId: string,
   fileId: string,
   originalName: string
 ): string {
   const safeName = originalName.replace(/[^\w.\-]/g, '_');
-  return `vendors/${vendorId}/buckets/${bucketId}/${fileId}/${safeName}`;
+  return `vendors/${vendorKey}/buckets/${bucketId}/${fileId}/${safeName}`;
 }
