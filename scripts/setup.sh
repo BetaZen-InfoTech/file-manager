@@ -619,6 +619,12 @@ if grep -q '^COOKIE_SECURE=' "$ENV_FILE"; then
 else
   printf '\nCOOKIE_SECURE=%s\n' "$DESIRED_COOKIE_SECURE" >> "$ENV_FILE"
 fi
+# CRITICAL: re-export so `pm2 --update-env` picks up the NEW value. Step 7 already
+# exported the optimistic COOKIE_SECURE into this shell; without this line
+# --update-env would re-inject that STALE value and OVERRIDE the .env edit above,
+# leaving an HTTP-only box serving Secure cookies → browser drops them → login
+# silently bounces back to /login even with the right password.
+export COOKIE_SECURE="$DESIRED_COOKIE_SECURE"
 pm2 reload filemanager --update-env >/dev/null 2>&1 || true
 if [[ "$DESIRED_COOKIE_SECURE" == "true" ]]; then
   ok "COOKIE_SECURE=true (HTTPS active — session cookie is Secure)"
