@@ -781,6 +781,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
             username = `${username}_${Math.floor(Date.now() / 1000) % 100000}`;
           }
           const created = await Vendor.create({
+            _id: new mongoose.Types.ObjectId(String(v._id)), // keep source id → identical structure
             name: v.name,
             slug: v.slug,
             username,
@@ -811,6 +812,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
         inc('buckets', 'reused');
       } else {
         const created = await Bucket.create({
+          _id: new mongoose.Types.ObjectId(String(b._id)), // keep source id → same bucket folder
           vendorId: vId,
           name: b.name,
           description: b.description || '',
@@ -845,12 +847,14 @@ export async function runFullMigration(jobId: string): Promise<void> {
           folderMap.set(String(f._id), String(ex._id));
           inc('folders', 'reused');
         } else {
-          let parentId: string | null = null;
-          if (f.parentId) {
-            parentId = folderMap.get(String(f.parentId)) || null;
-            if (!parentId) log(job, 'warn', `Folder "${f.name}": parent not migrated, created at root.`);
-          }
+          // Ids are preserved on create, so a source parentId already equals the
+          // dest folder id — use the map (for merged folders) else the source id
+          // directly, so the tree stays intact regardless of processing order.
+          const parentId: string | null = f.parentId
+            ? folderMap.get(String(f.parentId)) || String(f.parentId)
+            : null;
           const created = await Folder.create({
+            _id: new mongoose.Types.ObjectId(String(f._id)), // keep source id → identical folder tree
             vendorId: vId,
             bucketId: bId,
             name: f.name,
@@ -882,7 +886,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
         inc('files', 'skipped');
         continue;
       }
-      const folderId = fl.folderId ? folderMap.get(String(fl.folderId)) || null : null;
+      const folderId = fl.folderId ? folderMap.get(String(fl.folderId)) || String(fl.folderId) : null;
       touchedBuckets.add(bId);
       try {
         const match: any = await FileModel.findOne({
@@ -940,6 +944,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
           inc('files', 'bytes', fl.sizeBytes);
         } else {
           const created: any = await FileModel.create({
+            _id: new mongoose.Types.ObjectId(String(fl._id)), // keep source id → same file folder
             vendorId: vId,
             bucketId: bId,
             folderId,
@@ -987,6 +992,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
         }
         const vId = u.vendorId ? vendorMap.get(String(u.vendorId)) || null : null;
         await User.create({
+          _id: new mongoose.Types.ObjectId(String(u._id)),
           vendorId: vId,
           email: u.email,
           name: u.name || '',
@@ -1010,6 +1016,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
         }
         const bucketIds = (k.bucketIds || []).map((b: any) => bucketMap.get(String(b))).filter(Boolean);
         await ApiKey.create({
+          _id: new mongoose.Types.ObjectId(String(k._id)),
           vendorId: vId,
           name: k.name,
           keyHash: k.keyHash,
@@ -1042,6 +1049,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
           continue;
         }
         await Link.create({
+          _id: new mongoose.Types.ObjectId(String(l._id)),
           vendorId: vId,
           fileId: fId,
           type: l.type,
@@ -1070,7 +1078,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
           inc('plans', 'skipped');
           continue;
         }
-        await Plan.create({ code: pl.code, name: pl.name, description: pl.description, priceInr: pl.priceInr, interval: pl.interval, limits: pl.limits, active: pl.active, sortOrder: pl.sortOrder });
+        await Plan.create({ _id: new mongoose.Types.ObjectId(String(pl._id)), code: pl.code, name: pl.name, description: pl.description, priceInr: pl.priceInr, interval: pl.interval, limits: pl.limits, active: pl.active, sortOrder: pl.sortOrder });
         inc('plans', 'added');
       } catch (e) {
         log(job, 'error', `plan ${pl.code}: ${msg(e)}`);
@@ -1085,6 +1093,7 @@ export async function runFullMigration(jobId: string): Promise<void> {
           continue;
         }
         await Payment.create({
+          _id: new mongoose.Types.ObjectId(String(pay._id)),
           vendorId: vId,
           planCode: pay.planCode,
           gateway: pay.gateway,
