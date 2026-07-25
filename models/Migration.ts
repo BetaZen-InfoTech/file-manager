@@ -36,6 +36,9 @@ const MigrationSchema = new Schema(
     // full platform migration, which imports ALL vendors.
     targetVendorId: { type: Schema.Types.ObjectId, ref: 'Vendor', default: null },
     targetBucketName: { type: String, default: '' },
+    // Full migration only: also copy the safe allowlist of app settings from the
+    // source's .env (limits + mail). Never includes secrets/DB/storage/domain.
+    migrateEnv: { type: Boolean, default: false },
 
     status: {
       type: String,

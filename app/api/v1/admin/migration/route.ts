@@ -44,7 +44,7 @@ export async function POST(req: NextRequest) {
   const body = await safeParseJson(req);
   const parsed = migrationActionSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
-  const { action, source, bcdnp, sourceType, id, targetVendorId, targetBucketName } = parsed.data;
+  const { action, source, bcdnp, sourceType, id, targetVendorId, targetBucketName, migrateEnv } = parsed.data;
   const st = sourceType || 's3';
 
   const isBcdnp = st === 'bcdnp' || st === 'bcdnp-full';
@@ -85,6 +85,7 @@ export async function POST(req: NextRequest) {
       sourceType: 'bcdnp-full',
       bcdnp: { baseUrl: bcdnp!.baseUrl.replace(/\/+$/, ''), tokenEnc: encryptSecret(bcdnp!.token) },
       targetBucketName: 'full-migration',
+      migrateEnv: !!migrateEnv,
       status: 'pending',
       createdBy: p.userId || null
     });

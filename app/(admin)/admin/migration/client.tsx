@@ -36,6 +36,7 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
   });
   const [vendorId, setVendorId] = useState(vendors[0]?.id || '');
   const [bucketName, setBucketName] = useState('imported');
+  const [migrateEnv, setMigrateEnv] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [discover, setDiscover] = useState<{ objects: number; bytes: number } | null>(null);
@@ -56,6 +57,7 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
       p.targetVendorId = vendorId;
       p.targetBucketName = bucketName;
     }
+    if (action === 'start' && mode === 'bcdnp-full') p.migrateEnv = migrateEnv;
     return p;
   }
 
@@ -185,6 +187,22 @@ export default function MigrationClient({ vendors }: { vendors: Vendor[] }) {
             path+name+size match (byte-identical are skipped); password &amp; API-key hashes carry over so logins and
             keys keep working. Use an <strong>instance-scoped</strong> transfer token from the old server.
           </div>
+        )}
+
+        {mode === 'bcdnp-full' && (
+          <label className="flex items-start gap-2 rounded-lg border border-border px-3 py-2 text-[11px] text-gray-400">
+            <input
+              type="checkbox"
+              className="mt-0.5"
+              checked={migrateEnv}
+              onChange={(e) => setMigrateEnv(e.target.checked)}
+            />
+            <span>
+              Also migrate <strong className="text-gray-200">app settings from the source .env</strong> (upload/rate
+              limits + mail). Secrets, database URI, storage driver &amp; domain are <strong>never</strong> copied. After
+              it finishes, run <code>pm2 reload filemanager --update-env</code> on this server to activate them.
+            </span>
+          </label>
         )}
 
         {mode !== 's3' ? (

@@ -6,6 +6,7 @@ import mongoose from 'mongoose';
 import { dbConnect } from './db';
 import { storage, objectKey } from './storage';
 import { vendorFolderKeyById } from './vendor-folder';
+import { applyEnvToFile } from './env-transfer';
 import { decryptSecret, encryptSecret } from './crypto';
 import { Migration, MigrationDoc } from '@/models/Migration';
 import { Bucket } from '@/models/Bucket';
@@ -1147,6 +1148,38 @@ export async function runFullMigration(jobId: string): Promise<void> {
       }
     }
     await step('billing', 'completed', `${R.plans?.added || 0} plans · ${R.payments?.added || 0} payments · ${R.settings?.added || 0} settings · ${R.auditlogs?.added || 0} logs`);
+
+    // 9) OPTIONAL: migrate a SAFE allowlist of app settings from the source .env
+    // (upload/rate limits + mail). Secrets, DB URI, storage, domain, ports are
+    // never fetched or written. Requires a `pm2 reload --update-env` to apply.
+    if (job.migrateEnv) {
+      await step('env', 'running');
+      try {
+        const r = await fetch(`${normBase(baseUrl)}/api/v1/transfer/env`, {
+          headers: { authorization: `Bearer ${token}` },
+          redirect: 'manual'
+        });
+        if (r.status === 200) {
+          const j: any = await r.json();
+          const written = applyEnvToFile(j.env || {});
+          inc('env', 'applied', written.length);
+          log(
+            job,
+            'info',
+            written.length
+              ? `Applied ${written.length} app settings from source .env: ${written.join(', ')}. Run "pm2 reload filemanager --update-env" to activate.`
+              : 'Source .env had no migratable app settings.'
+          );
+          await step('env', 'completed', `${written.length} keys`);
+        } else {
+          log(job, 'warn', `Source has no /transfer/env endpoint (${r.status}) — env migration skipped.`);
+          await step('env', 'completed', `unavailable (${r.status})`);
+        }
+      } catch (e) {
+        log(job, 'warn', `env migration skipped: ${msg(e)}`);
+        await step('env', 'completed', 'skipped');
+      }
+    }
 
     // Reconcile counters for every bucket we touched + each vendor.
     for (const bId of touchedBuckets) {

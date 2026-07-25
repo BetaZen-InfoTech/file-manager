@@ -243,7 +243,10 @@ export const migrationActionSchema = z
       .min(1)
       .max(120)
       .regex(/^[a-zA-Z0-9._-]+$/, 'letters, digits, . _ - only')
-      .optional()
+      .optional(),
+    // Full migration only: also copy a SAFE allowlist of app settings from the
+    // source .env (limits + mail). Never touches secrets/DB/storage/domain.
+    migrateEnv: z.boolean().optional()
   })
   .superRefine((v, ctx) => {
     const st = v.sourceType || 's3';
