@@ -2,6 +2,7 @@ import { ReactNode } from 'react';
 import { redirect } from 'next/navigation';
 import { getServerSession } from '@/lib/session-server';
 import { appVersion } from '@/lib/version';
+import { serverIp } from '@/lib/server-ip';
 import { Logo } from '@/components/Logo';
 import { Icon } from '@/components/Icon';
 import { SidebarNav, NavItem } from '@/components/SidebarNav';
@@ -27,6 +28,8 @@ export default async function AdminLayout({ children }: { children: ReactNode })
   if (!session) redirect('/login');
   if (!['super_admin', 'platform_staff'].includes(session.user.role)) redirect('/dashboard');
 
+  const ip = serverIp();
+
   return (
     <div className="flex min-h-screen flex-col md:flex-row">
       <aside className="hidden border-r border-border bg-panel md:flex md:w-64 md:flex-col">
@@ -37,6 +40,16 @@ export default async function AdminLayout({ children }: { children: ReactNode })
             <div className="truncate text-xs text-gray-400">{session.user.email}</div>
           </div>
         </div>
+
+        {ip && (
+          <div
+            className="flex items-center gap-2 border-b border-border bg-black/20 px-5 py-2"
+            title="This server's IP address"
+          >
+            <Icon name="server" className="h-3.5 w-3.5 shrink-0 text-emerald-400" />
+            <span className="font-mono text-xs text-emerald-400">{ip}</span>
+          </div>
+        )}
 
         <div className="flex-1 overflow-y-auto p-3">
           <SidebarNav items={nav} />
@@ -58,6 +71,7 @@ export default async function AdminLayout({ children }: { children: ReactNode })
         <div className="flex items-center gap-2">
           <Logo className="h-7 w-7" />
           <span className="text-sm font-semibold text-white">Admin</span>
+          {ip && <span className="font-mono text-[10px] text-emerald-400">{ip}</span>}
           <span className="font-mono text-[10px] text-gray-500">v{appVersion()}</span>
         </div>
         <form action="/api/v1/auth/logout" method="post">

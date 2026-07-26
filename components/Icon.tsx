@@ -17,6 +17,7 @@ export type IconName =
   | 'key'
   | 'token'
   | 'trash'
+  | 'server'
   | 'logout';
 
 const PATHS: Record<IconName, JSX.Element> = {
@@ -101,6 +102,13 @@ const PATHS: Record<IconName, JSX.Element> = {
     </>
   ),
   trash: <path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14" />,
+  server: (
+    <>
+      <rect x="3" y="4" width="18" height="7" rx="2" />
+      <rect x="3" y="13" width="18" height="7" rx="2" />
+      <path d="M7 7.5h.01M7 16.5h.01" />
+    </>
+  ),
   logout: (
     <>
       <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
