@@ -5,6 +5,7 @@ import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -21,6 +22,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!file) return notFound('file not found');
@@ -33,6 +35,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   const body = await safeParseJson(req);
   const parsed = updateFileSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input');
@@ -51,6 +54,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   // move: validate the target folder is in the same bucket (or root)
   if (parsed.data.folderId !== undefined) {
     if (parsed.data.folderId) {
+      if (!isObjectIdHex(parsed.data.folderId)) return badRequest('invalid id');
       const target = await Folder.findOne({
         _id: parsed.data.folderId,
         vendorId: p.vendorId,
@@ -82,6 +86,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const target = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!target) return notFound('file not found');

@@ -5,6 +5,7 @@ import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!can(p, 'admin:vendor:read')) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('vendor not found');
   await dbConnect();
   const v = await Vendor.findById(params.id).lean();
   if (!v) return notFound('vendor not found');
@@ -36,6 +38,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!can(p, 'admin:vendor:update')) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('vendor not found');
   const body = await safeParseJson(req);
   const parsed = updateVendorSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });

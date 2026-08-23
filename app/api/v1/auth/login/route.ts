@@ -7,7 +7,7 @@ import { permissionsForRole } from '@/lib/rbac';
 import { loginSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { env } from '@/lib/env';
-import { badRequest, jsonOk, unauthorized, maintenance, safeParseJson } from '@/lib/http';
+import { badRequest, jsonOk, unauthorized, maintenance, safeParseJson, internalError } from '@/lib/http';
 import { getMaintenance } from '@/lib/maintenance';
 import { User } from '@/models/User';
 import { Vendor } from '@/models/Vendor';
@@ -15,6 +15,7 @@ import { Vendor } from '@/models/Vendor';
 export const runtime = 'nodejs';
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await safeParseJson(req);
   const parsed = loginSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
@@ -49,11 +50,16 @@ export async function POST(req: NextRequest) {
     panel
   });
 
-  user.lastLoginAt = new Date();
+  // Stamp last-login (and backfill permissions if empty) with a TARGETED update.
+  // NOTE: never `user.save()` here — save() re-validates the ENTIRE document, so a
+  // single legacy/migrated field (e.g. an old `role` value no longer in the enum)
+  // would throw a ValidationError and crash login with an opaque empty 500. A
+  // scoped $set touches only these fields and never blocks a valid credential.
+  const update: Record<string, unknown> = { lastLoginAt: new Date() };
   if (!user.permissions || user.permissions.length === 0) {
-    user.permissions = permissionsForRole(user.role);
+    update.permissions = permissionsForRole(user.role);
   }
-  await user.save();
+  await User.updateOne({ _id: user._id }, { $set: update });
 
   cookies().set(env.SESSION_COOKIE_NAME, token, {
     httpOnly: true,
@@ -88,4 +94,11 @@ export async function POST(req: NextRequest) {
       vendorId: user.vendorId ? String(user.vendorId) : null
     }
   });
+  } catch (err) {
+    // Any unexpected failure (DB hiccup, cast/validation error, etc.) must return a
+    // proper JSON error — never an empty body, which the client can't parse ("Unexpected
+    // end of JSON input") and which hides the real cause.
+    console.error('auth.login failed', err);
+    return internalError();
+  }
 }

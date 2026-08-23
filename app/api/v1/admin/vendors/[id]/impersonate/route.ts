@@ -5,7 +5,7 @@ import { authenticate } from '@/lib/auth';
 import { canImpersonate } from '@/lib/rbac';
 import { signSession } from '@/lib/jwt';
 import { selectImpersonationTarget } from '@/lib/impersonation';
-import { badRequest, forbidden, jsonOk, notFound, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { env } from '@/lib/env';
 import { Vendor } from '@/models/Vendor';
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (p.impersonatorId) {
     return badRequest('Already impersonating — stop the current session first.');
   }
+  if (!isObjectIdHex(params.id)) return notFound('vendor not found');
 
   await dbConnect();
   const vendor = await Vendor.findById(params.id).lean();

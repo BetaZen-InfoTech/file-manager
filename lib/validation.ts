@@ -306,11 +306,15 @@ export const blankFileSchema = z.object({
   mimeType: z.string().max(120).optional()
 });
 
+const objectIdString = z.string().regex(/^[a-f0-9]{24}$/i, 'invalid id');
+
 export const archiveSchema = z.object({
   name: z.string().min(1).max(200).optional(),
-  fileIds: z.array(z.string().max(64)).max(2000).optional(),
-  folderIds: z.array(z.string().max(64)).max(200).optional(),
-  folderId: z.string().max(64).nullable().optional() // where to place the .zip
+  // Must be real ObjectIds — these flow into Mongoose `$in`/`findOne` queries, where a
+  // non-castable string would throw a CastError and 500 the request with an empty body.
+  fileIds: z.array(objectIdString).max(2000).optional(),
+  folderIds: z.array(objectIdString).max(200).optional(),
+  folderId: objectIdString.nullable().optional() // where to place the .zip
 });
 
 export const extractSchema = z.object({

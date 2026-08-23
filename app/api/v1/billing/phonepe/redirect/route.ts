@@ -17,13 +17,15 @@ export async function GET(req: NextRequest) {
   const done = (status: string) =>
     NextResponse.redirect(`${origin}/dashboard/billing?status=${status}`, 303);
 
-  if (!pid) return done('failed');
+  // Validate the id up front: an un-castable pid would otherwise throw a Mongoose
+  // CastError out of the handler (empty-body 500) instead of a clean redirect.
+  if (!pid || !/^[a-f0-9]{24}$/i.test(pid)) return done('failed');
   await dbConnect();
-  const payment = await Payment.findById(pid);
-  if (!payment || payment.gateway !== 'phonepe') return done('failed');
-  if (payment.status === 'paid') return done('success');
 
   try {
+    const payment = await Payment.findById(pid);
+    if (!payment || payment.gateway !== 'phonepe') return done('failed');
+    if (payment.status === 'paid') return done('success');
     const cfg = await getPaymentConfig();
     const st = await checkPhonePeStatus(cfg.phonepe, payment.gatewayOrderId);
     if (st.paid) {

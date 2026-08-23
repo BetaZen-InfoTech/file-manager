@@ -13,7 +13,8 @@ import {
   notFound,
   quotaExceeded,
   unauthorized,
-  suspended
+  suspended,
+  isObjectIdHex
 } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { storage, objectKey } from '@/lib/storage';
@@ -27,6 +28,7 @@ import { extractImageMeta, generateThumbnails } from '@/lib/image';
 import { sendMail, MailTemplates } from '@/lib/mail';
 import { Bucket } from '@/models/Bucket';
 import { FileModel } from '@/models/File';
+import { Folder } from '@/models/Folder';
 import { Vendor } from '@/models/Vendor';
 import mongoose from 'mongoose';
 
@@ -38,9 +40,16 @@ export async function GET(req: NextRequest, { params }: { params: { bid: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (!can(p, 'file:list', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   await dbConnect();
   const url = new URL(req.url);
   const folderId = url.searchParams.get('folderId') || null;
+  if (folderId && !isObjectIdHex(folderId)) return badRequest('invalid folderId');
+  // Verify the bucket belongs to this vendor. Without it, listing a foreign/unknown
+  // bucket returns 200-with-empty instead of 404 — inconsistent with every other
+  // bucket sub-route (detail/upload/archive all 404) and leaks bucket existence.
+  const ownBucket = await Bucket.findOne({ _id: params.bid, vendorId: p.vendorId }).select('_id').lean();
+  if (!ownBucket) return notFound('bucket not found');
   const showHidden = url.searchParams.get('showHidden') === 'true';
   const q = (url.searchParams.get('q') || '').slice(0, 100);
   const page = Math.max(1, Number(url.searchParams.get('page') || 1));
@@ -73,6 +82,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
 
   const contentType = req.headers.get('content-type') || '';
   if (!contentType.toLowerCase().startsWith('multipart/form-data'))
@@ -117,7 +127,23 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   const quota = await checkQuota(p.vendorId, size);
   if (!quota.ok) return quotaExceeded();
 
-  const folderId = form.get('folderId');
+  // Validate folderId: must be a well-formed id AND belong to THIS vendor+bucket.
+  // Without this a bad id throws a Mongoose CastError (empty 500), and a foreign
+  // valid id would silently attach the file to another bucket/vendor's folder.
+  const folderIdRaw = form.get('folderId');
+  let folderId: mongoose.Types.ObjectId | null = null;
+  if (typeof folderIdRaw === 'string' && folderIdRaw.trim()) {
+    if (!isObjectIdHex(folderIdRaw)) return badRequest('invalid folderId');
+    const parentFolder = await Folder.findOne({
+      _id: folderIdRaw,
+      vendorId: p.vendorId,
+      bucketId: bucket._id
+    })
+      .select('_id')
+      .lean();
+    if (!parentFolder) return badRequest('folder not found in this bucket');
+    folderId = parentFolder._id as any;
+  }
   // Destination path within the bucket's server folder (default root "/"). The
   // file is mirrored to /var/www/vendors/<username>/<bucket>/<path>/<name> so it
   // shows in the file manager.
@@ -182,7 +208,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   const existingVersion = await FileModel.findOne({
     vendorId: p.vendorId,
     bucketId: bucket._id,
-    folderId: folderId ? folderId : null,
+    folderId,
     originalName
   })
     .sort({ version: -1 })
@@ -193,7 +219,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
     _id: fileIdObj,
     vendorId: p.vendorId,
     bucketId: bucket._id,
-    folderId: folderId ? folderId : null,
+    folderId,
     originalName,
     storageKey: storageKeyToUse,
     extension,

@@ -4,7 +4,7 @@ import mongoose from 'mongoose';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { blankFileSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'file:upload', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
 
   const body = await safeParseJson(req);
   const parsed = blankFileSchema.safeParse(body);
@@ -39,6 +40,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
 
   let folderId: any = null;
   if (parsed.data.folderId) {
+    if (!isObjectIdHex(parsed.data.folderId)) return badRequest('invalid id');
     const target = await Folder.findOne({ _id: parsed.data.folderId, vendorId: p.vendorId, bucketId: params.bid }).lean();
     if (!target) return badRequest('folder not found');
     folderId = target._id;

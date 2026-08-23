@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { forbidden, jsonOk, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, jsonOk, unauthorized, isObjectIdHex } from '@/lib/http';
 import { AuditLog } from '@/models/AuditLog';
 
 export const runtime = 'nodejs';
@@ -18,7 +18,10 @@ export async function GET(req: NextRequest) {
   const page = Math.max(1, Number(url.searchParams.get('page') || 1));
   const limit = Math.min(200, Math.max(1, Number(url.searchParams.get('limit') || 50)));
   const filter: any = {};
-  if (vendorId) filter.vendorId = vendorId;
+  if (vendorId) {
+    if (!isObjectIdHex(vendorId)) return badRequest('invalid vendorId');
+    filter.vendorId = vendorId;
+  }
   if (action) filter.action = action;
   const [items, total] = await Promise.all([
     AuditLog.find(filter)

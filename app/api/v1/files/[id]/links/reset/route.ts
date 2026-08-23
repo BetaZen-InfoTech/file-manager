@@ -8,7 +8,8 @@ import {
   jsonOk,
   notFound,
   safeParseJson,
-  unauthorized
+  unauthorized,
+  isObjectIdHex
 } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { resetLinksSchema } from '@/lib/validation';
@@ -26,6 +27,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const parsed = resetLinksSchema.safeParse(body ?? {});
   if (!parsed.success) return badRequest('Invalid input');
 
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!file) return notFound('file not found');
@@ -56,6 +58,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           expiresAt: l.expiresAt,
           maxDownloads: l.maxDownloads,
           requiredScope: l.requiredScope,
+          // Carry over the access protection — a rotated link MUST keep the same
+          // password gate and label, otherwise regeneration silently downgrades a
+          // password-protected link to a public one.
+          passwordHash: l.passwordHash,
+          note: l.note,
           status: 'active',
           createdBy: p.userId || null
         });

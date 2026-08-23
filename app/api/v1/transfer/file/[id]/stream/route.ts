@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { Readable } from 'stream';
 import { dbConnect } from '@/lib/db';
-import { notFound, unauthorized } from '@/lib/http';
+import { notFound, unauthorized, isObjectIdHex } from '@/lib/http';
 import { verifyTransferToken } from '@/lib/transfer-token';
 import { storage } from '@/lib/storage';
 import { FileModel } from '@/models/File';
@@ -16,6 +16,7 @@ export const maxDuration = 300;
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const tok = await verifyTransferToken(req);
   if (!tok) return unauthorized('invalid transfer token');
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
 
   await dbConnect();
   const filter: any = { _id: params.id, status: 'ready' };

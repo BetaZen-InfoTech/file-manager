@@ -4,6 +4,7 @@ import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
 import {
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -20,6 +21,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!can(p, 'admin:vendor:suspend')) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('vendor not found');
   const body = await safeParseJson(req);
   const parsed = suspendVendorSchema.safeParse(body ?? {});
   if (!parsed.success) return badRequest('Invalid input');

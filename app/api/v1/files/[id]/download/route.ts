@@ -3,7 +3,7 @@ import { Readable } from 'stream';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { forbidden, notFound, unauthorized, suspended } from '@/lib/http';
+import { forbidden, isObjectIdHex, notFound, unauthorized, suspended } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { storage } from '@/lib/storage';
 import { FileModel } from '@/models/File';
@@ -16,6 +16,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const file = await FileModel.findOne({
     _id: params.id,

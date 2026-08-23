@@ -5,6 +5,7 @@ import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -22,10 +23,15 @@ export async function GET(req: NextRequest, { params }: { params: { bid: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (!can(p, 'file:list', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   await dbConnect();
   const url = new URL(req.url);
   const showHidden = url.searchParams.get('showHidden') === 'true';
   const parentId = url.searchParams.get('parentId') || null;
+  if (parentId && !isObjectIdHex(parentId)) return badRequest('invalid parentId');
+  // Confirm bucket ownership (else a foreign/unknown bucket lists as 200-empty).
+  const ownBucket = await Bucket.findOne({ _id: params.bid, vendorId: p.vendorId }).select('_id').lean();
+  if (!ownBucket) return notFound('bucket not found');
   const filter: any = { vendorId: p.vendorId, bucketId: params.bid, parentId: parentId };
   if (!showHidden) filter.isHidden = { $ne: true };
   const items = await Folder.find(filter).sort({ name: 1 }).lean();
@@ -37,6 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (!can(p, 'folder:create', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   const body = await safeParseJson(req);
   const parsed = createFolderSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input');
@@ -45,6 +52,7 @@ export async function POST(req: NextRequest, { params }: { params: { bid: string
   if (!bucket) return notFound('bucket not found');
   let parentPath = '/';
   if (parsed.data.parentId) {
+    if (!isObjectIdHex(parsed.data.parentId)) return badRequest('invalid id');
     const parent = await Folder.findOne({
       _id: parsed.data.parentId,
       vendorId: p.vendorId,

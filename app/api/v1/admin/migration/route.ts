@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, jsonOk, safeParseJson, unauthorized, isObjectIdHex } from '@/lib/http';
 import { migrationActionSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { dbConnect } from '@/lib/db';
@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
   await dbConnect();
   const id = new URL(req.url).searchParams.get('id');
   if (id) {
+    if (!isObjectIdHex(id)) return badRequest('invalid id');
     const job = await Migration.findById(id).lean();
     if (!job) return badRequest('not found');
     return jsonOk(redact(job));
@@ -58,6 +59,12 @@ export async function POST(req: NextRequest) {
   }
 
   await dbConnect();
+
+  // resume/cancel key off a job id — reject a non-castable one before it hits a
+  // Mongoose query (which would throw a CastError → empty-body 500).
+  if ((action === 'resume' || action === 'cancel') && !isObjectIdHex(String(id))) {
+    return badRequest('invalid id');
+  }
 
   // ---- resume / cancel ----
   if (action === 'resume') {

@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, safeParseJson, unauthorized } from '@/lib/http';
 import { transferTokenSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { dbConnect } from '@/lib/db';
@@ -35,11 +35,13 @@ export async function POST(req: NextRequest) {
   const parsed = transferTokenSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
   const { action, hours, label, vendorId, id } = parsed.data;
+  if (vendorId && !isObjectIdHex(vendorId)) return badRequest('invalid id');
 
   await dbConnect();
 
   if (action === 'revoke') {
     if (!id) return badRequest('id required');
+    if (!isObjectIdHex(id)) return badRequest('invalid id');
     await TransferToken.updateOne({ _id: id }, { $set: { status: 'revoked' } });
     await audit(p, req, { action: 'transfer.token.revoke', resourceType: 'transfer_token', resourceId: String(id) });
     return jsonOk({ ok: true });

@@ -6,7 +6,7 @@ import mime from 'mime-types';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { extractSchema } from '@/lib/validation';
 import { storage, objectKey } from '@/lib/storage';
@@ -70,6 +70,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
 
   const body = await safeParseJson(req);
   const parsed = extractSchema.safeParse(body);
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   // base folder to extract into
   let baseRel = '';
   if (parsed.data.folderId) {
+    if (!isObjectIdHex(parsed.data.folderId)) return badRequest('invalid id');
     const f = await Folder.findOne({ _id: parsed.data.folderId, vendorId: p.vendorId, bucketId: zip.bucketId }).lean();
     if (!f) return badRequest('target folder not found');
     baseRel = fullPath(f.path || '/', f.name);

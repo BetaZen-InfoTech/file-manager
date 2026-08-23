@@ -6,6 +6,7 @@ import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -25,6 +26,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!file) return notFound('file not found');
@@ -56,6 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   const body = await safeParseJson(req);
   const parsed = createLinkSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });

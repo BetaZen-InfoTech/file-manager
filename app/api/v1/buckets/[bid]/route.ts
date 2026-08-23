@@ -5,6 +5,7 @@ import { can } from '@/lib/rbac';
 import {
   badRequest,
   forbidden,
+  isObjectIdHex,
   jsonOk,
   notFound,
   safeParseJson,
@@ -23,6 +24,7 @@ export async function GET(req: NextRequest, { params }: { params: { bid: string 
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   await dbConnect();
   const bucket = await Bucket.findOne({ _id: params.bid, vendorId: p.vendorId }).lean();
   if (!bucket) return notFound('bucket not found');
@@ -37,6 +39,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { bid: strin
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'bucket:update', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   const body = await safeParseJson(req);
   const parsed = updateBucketSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input');
@@ -72,6 +75,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { bid: stri
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'bucket:delete', { vendorId: p.vendorId, bucketId: params.bid })) return forbidden();
+  if (!isObjectIdHex(params.bid)) return notFound('bucket not found');
   await dbConnect();
   const fileCount = await FileModel.countDocuments({
     bucketId: params.bid,

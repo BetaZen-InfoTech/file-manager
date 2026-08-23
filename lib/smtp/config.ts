@@ -49,13 +49,25 @@ export async function getSmtpConfig(): Promise<SmtpConfig> {
   const v = doc.value as any;
   const fb = envFallback();
   const port = Number(v.port || fb.port || 587);
+  // Decrypt the stored SMTP password. If the blob is encrypted but decryption
+  // yields '' (the AES key is derived from JWT_SECRET — a changed secret, e.g.
+  // after a server migration, makes the old ciphertext unreadable), warn loudly:
+  // otherwise mail silently stops sending with no diagnostic ("reset mail not
+  // sending"). The operator just needs to re-enter the password in the panel.
+  const passBlob = String(v.pass || '');
+  const pass = decryptSecret(passBlob);
+  if (passBlob.startsWith('enc:v1:') && !pass) {
+    console.warn(
+      '[smtp] stored SMTP password could not be decrypted — JWT_SECRET likely changed since it was saved (e.g. a migration). Re-enter the SMTP password in Admin → SMTP settings. Mail will not send until then.'
+    );
+  }
   return {
     enabled: Boolean(v.enabled),
     host: String(v.host || fb.host),
     port,
     encryption: deriveEncryption(v, port),
     user: String(v.user || ''),
-    pass: decryptSecret(String(v.pass || '')),
+    pass,
     fromName: String(v.fromName || ''),
     fromEmail: String(v.fromEmail || fb.fromEmail || '')
   };

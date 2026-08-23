@@ -28,11 +28,24 @@ export function badRequest(message = 'Bad request', extra?: Record<string, unkno
 export function maintenance(message: string): NextResponse {
   return jsonError('MAINTENANCE', message, 503);
 }
+export function internalError(message = 'Something went wrong. Please try again.'): NextResponse {
+  return jsonError('INTERNAL', message, 500);
+}
 export function suspended(): NextResponse {
   return jsonError('VENDOR_SUSPENDED', 'This vendor is suspended.', 403);
 }
 export function quotaExceeded(): NextResponse {
   return jsonError('QUOTA_EXCEEDED', 'Storage quota exceeded.', 413);
+}
+
+/**
+ * Strict Mongo ObjectId check (24 hex chars). Use to guard any id that flows from
+ * the client into a Mongoose query — an un-castable value makes Mongoose throw a
+ * CastError which, uncaught, becomes an opaque empty-body 500. Stricter than
+ * mongoose.isValidObjectId (which also accepts 12-char strings and numbers).
+ */
+export function isObjectIdHex(v: unknown): v is string {
+  return typeof v === 'string' && /^[a-f0-9]{24}$/i.test(v);
 }
 
 export async function safeParseJson<T = unknown>(req: Request): Promise<T | null> {

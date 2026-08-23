@@ -3,7 +3,7 @@ import { Readable } from 'stream';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { editContentSchema } from '@/lib/validation';
 import { storage } from '@/lib/storage';
@@ -36,6 +36,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const p = await authenticate(req);
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const file = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId, status: 'ready' }).lean();
   if (!file) return notFound('file not found');
@@ -52,6 +53,7 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
 
   const body = await safeParseJson(req);
   const parsed = editContentSchema.safeParse(body);

@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { forbidden, jsonOk, notFound, suspended, unauthorized } from '@/lib/http';
+import { forbidden, isObjectIdHex, jsonOk, notFound, suspended, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { FileModel } from '@/models/File';
 
@@ -13,6 +13,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
   await dbConnect();
   const target = await FileModel.findOne({ _id: params.id, vendorId: p.vendorId }).lean();
   if (!target) return notFound('file not found');

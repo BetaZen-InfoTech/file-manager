@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { badRequest, forbidden, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
+import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, quotaExceeded, safeParseJson, suspended, unauthorized } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { copyFileSchema } from '@/lib/validation';
 import { checkQuota, incrementUsage } from '@/lib/quota';
@@ -19,6 +19,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
+  if (!isObjectIdHex(params.id)) return notFound('file not found');
 
   const body = await safeParseJson(req);
   const parsed = copyFileSchema.safeParse(body);
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   let folderId: any = src.folderId || null;
   if (parsed.data.folderId !== undefined) {
     if (parsed.data.folderId) {
+      if (!isObjectIdHex(parsed.data.folderId)) return badRequest('invalid id');
       const target = await Folder.findOne({ _id: parsed.data.folderId, vendorId: p.vendorId, bucketId: src.bucketId }).lean();
       if (!target) return badRequest('target folder not found in this bucket');
       folderId = target._id;

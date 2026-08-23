@@ -64,6 +64,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!p) return unauthorized();
   if (!p.vendorId) return forbidden();
   if (!can(p, 'apikey:revoke', { vendorId: p.vendorId })) return forbidden();
+  if (!mongoose.Types.ObjectId.isValid(params.id)) return notFound('api key not found');
   await dbConnect();
   const k = await ApiKey.findOneAndUpdate(
     { _id: params.id, vendorId: p.vendorId, status: 'active' },

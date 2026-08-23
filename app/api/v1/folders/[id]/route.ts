@@ -9,7 +9,8 @@ import {
   notFound,
   safeParseJson,
   suspended,
-  unauthorized
+  unauthorized,
+  isObjectIdHex
 } from '@/lib/http';
 import { audit } from '@/lib/audit';
 import { Folder } from '@/models/Folder';
@@ -25,6 +26,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (!can(p, 'folder:update', { vendorId: p.vendorId })) return forbidden();
   const body = (await safeParseJson(req)) as { name?: string; parentId?: string | null } | null;
   if (!body) return badRequest('invalid body');
+  if (!isObjectIdHex(params.id)) return notFound('folder not found');
   await dbConnect();
 
   const folder = await Folder.findOne({ _id: params.id, vendorId: p.vendorId });
@@ -44,14 +46,21 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   if (body.parentId !== undefined) {
     if (body.parentId) {
       if (String(body.parentId) === String(folder._id)) return badRequest("can't move into itself");
+      if (!isObjectIdHex(String(body.parentId))) return badRequest('invalid parentId');
       const parent = await Folder.findOne({
         _id: body.parentId,
         vendorId: p.vendorId,
         bucketId: folder.bucketId
       }).lean();
       if (!parent) return badRequest('target folder not found in this bucket');
+      // Reject moving a folder into its own subtree — that creates a parentId
+      // cycle and corrupts every descendant's path (unbounded tree walks later).
+      const parentFull = parent.path === '/' ? `/${parent.name}` : `${parent.path}/${parent.name}`;
+      if (parentFull === oldFull || parentFull.startsWith(oldFull + '/')) {
+        return badRequest("can't move a folder into its own subtree");
+      }
       folder.parentId = parent._id as any;
-      folder.path = parent.path === '/' ? `/${parent.name}` : `${parent.path}/${parent.name}`;
+      folder.path = parentFull;
     } else {
       folder.parentId = null as any;
       folder.path = '/';
@@ -84,6 +93,7 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   if (!p.vendorId) return forbidden();
   if (p.vendorStatus === 'suspended') return suspended();
   if (!can(p, 'folder:update', { vendorId: p.vendorId })) return forbidden();
+  if (!isObjectIdHex(params.id)) return notFound('folder not found');
   await dbConnect();
   const fileCount = await FileModel.countDocuments({
     folderId: params.id,
