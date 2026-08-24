@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { sha256 } from '@/lib/crypto';
 import { hashPassword } from '@/lib/auth';
-import { badRequest, jsonOk, safeParseJson, internalError } from '@/lib/http';
+import { badRequest, jsonOk, safeParseJson, internalError, dbUnavailable, isDbConnectionError } from '@/lib/http';
 import { resetPasswordSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { User } from '@/models/User';
@@ -39,6 +39,10 @@ export async function POST(req: NextRequest) {
   await audit(null, req, { action: 'auth.password.reset', resourceType: 'user', resourceId: String(user._id) });
   return jsonOk({ ok: true, message: 'Password updated. You can now sign in.' });
   } catch (err) {
+    if (isDbConnectionError(err)) {
+      console.error('auth.reset-password DB unavailable', err);
+      return dbUnavailable();
+    }
     console.error('auth.reset-password failed', err);
     return internalError();
   }

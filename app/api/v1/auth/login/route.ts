@@ -7,7 +7,7 @@ import { permissionsForRole } from '@/lib/rbac';
 import { loginSchema } from '@/lib/validation';
 import { audit } from '@/lib/audit';
 import { env } from '@/lib/env';
-import { badRequest, jsonOk, unauthorized, maintenance, safeParseJson, internalError } from '@/lib/http';
+import { badRequest, jsonOk, unauthorized, maintenance, safeParseJson, internalError, dbUnavailable, isDbConnectionError } from '@/lib/http';
 import { getMaintenance } from '@/lib/maintenance';
 import { User } from '@/models/User';
 import { Vendor } from '@/models/Vendor';
@@ -95,9 +95,13 @@ export async function POST(req: NextRequest) {
     }
   });
   } catch (err) {
-    // Any unexpected failure (DB hiccup, cast/validation error, etc.) must return a
-    // proper JSON error — never an empty body, which the client can't parse ("Unexpected
-    // end of JSON input") and which hides the real cause.
+    // Any unexpected failure must return a proper JSON error — never an empty body,
+    // which the client can't parse ("Unexpected end of JSON input") and which hides
+    // the real cause. Surface a database outage explicitly so it's diagnosable.
+    if (isDbConnectionError(err)) {
+      console.error('auth.login DB unavailable', err);
+      return dbUnavailable();
+    }
     console.error('auth.login failed', err);
     return internalError();
   }

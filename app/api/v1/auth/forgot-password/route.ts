@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { env } from '@/lib/env';
 import { randomToken, sha256 } from '@/lib/crypto';
-import { badRequest, jsonOk, safeParseJson } from '@/lib/http';
+import { badRequest, jsonOk, safeParseJson, internalError, dbUnavailable, isDbConnectionError } from '@/lib/http';
 import { forgotPasswordSchema } from '@/lib/validation';
 import { sendMail, MailTemplates } from '@/lib/mail';
 import { audit } from '@/lib/audit';
@@ -16,6 +16,7 @@ export const runtime = 'nodejs';
 const GENERIC = { ok: true, message: 'If an account exists for that email, a reset link has been sent.' };
 
 export async function POST(req: NextRequest) {
+  try {
   const body = await safeParseJson(req);
   const parsed = forgotPasswordSchema.safeParse(body);
   if (!parsed.success) return badRequest('Invalid input', { issues: parsed.error.issues });
@@ -45,4 +46,12 @@ export async function POST(req: NextRequest) {
 
   await audit(null, req, { action: 'auth.password.forgot', resourceType: 'user', resourceId: String(user._id) });
   return jsonOk(GENERIC);
+  } catch (err) {
+    if (isDbConnectionError(err)) {
+      console.error('auth.forgot-password DB unavailable', err);
+      return dbUnavailable();
+    }
+    console.error('auth.forgot-password failed', err);
+    return internalError();
+  }
 }

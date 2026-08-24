@@ -31,6 +31,37 @@ export function maintenance(message: string): NextResponse {
 export function internalError(message = 'Something went wrong. Please try again.'): NextResponse {
   return jsonError('INTERNAL', message, 500);
 }
+export function dbUnavailable(
+  message = 'Database connection error. The service is temporarily unavailable — please try again in a moment.'
+): NextResponse {
+  return jsonError('DB_UNAVAILABLE', message, 503);
+}
+
+/**
+ * True when an error is a MongoDB/Mongoose connectivity failure (server down,
+ * unreachable, auth/DNS failure, or a query that timed out because there is no
+ * live connection). Lets route handlers return a clear DB_UNAVAILABLE 503 instead
+ * of an opaque empty-body 500 when the database is down.
+ */
+export function isDbConnectionError(err: unknown): boolean {
+  const e = err as { name?: string; message?: string; code?: string } | null | undefined;
+  if (!e) return false;
+  const name = e.name || '';
+  const msg = String(e.message || '');
+  if (
+    name === 'MongooseServerSelectionError' ||
+    name === 'MongoServerSelectionError' ||
+    name === 'MongoNetworkError' ||
+    name === 'MongoNetworkTimeoutError' ||
+    name === 'MongoNotConnectedError'
+  ) {
+    return true;
+  }
+  // Mongoose buffering timeout (a query issued while disconnected) + raw socket errors.
+  return /ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|failed to connect|buffering timed out|server selection|topology (was destroyed|is closed)|connection .*closed/i.test(
+    msg
+  );
+}
 export function suspended(): NextResponse {
   return jsonError('VENDOR_SUSPENDED', 'This vendor is suspended.', 403);
 }
