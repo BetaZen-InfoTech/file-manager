@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'stream';
 import argon2 from 'argon2';
 import { dbConnect } from './db';
-import { storage } from './storage';
+import { getObjectCached } from './cache';
 import { isLinkUsable, canAccessPrivateLink } from './links';
 import { verifyThirdPartyJwt } from './jwt';
 import { audit } from './audit';
@@ -155,7 +155,21 @@ export async function handleLinkDownload(
   // Stream the bytes THROUGH the app rather than 302-redirecting to a presigned
   // storage URL — the object store is internal (127.0.0.1) and unreachable by the
   // visitor, so a redirect breaks. Streaming serves it from this public host.
-  const obj = await storage.getObject(file.storageKey);
+  // getObjectCached serves from the VPS cache on a hit (no S3 round-trip) and
+  // transparently falls back to a direct storage read on any cache fault.
+  let obj;
+  try {
+    obj = await getObjectCached(file.storageKey, {
+      mimeType: file.mimeType,
+      sizeHint: file.sizeBytes
+    });
+  } catch {
+    // Storage object unreadable/missing (orphaned row, out-of-band deletion). We
+    // already consumed a download slot above, so hand it back, then return a clear
+    // JSON 500 instead of an opaque empty-body 500 the visitor can't parse.
+    await Link.updateOne({ _id: link._id }, { $inc: { downloadCount: -1 } }).catch(() => {});
+    return jsonError('STORAGE_ERROR', 'the file could not be read from storage', 500);
+  }
 
   await audit(null, req, {
     action: `link.download.${link.type}`,

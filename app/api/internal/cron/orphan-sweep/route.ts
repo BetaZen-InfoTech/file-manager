@@ -14,7 +14,8 @@ export const runtime = 'nodejs';
  * best handled by an external mc-based job since listing every object is costly.
  */
 export async function GET(req: NextRequest) {
-  if ((req.headers.get('x-cron-secret') || '') !== env.INTERNAL_CRON_SECRET) {
+  // Fail closed when the secret is unset (an empty header must not equal an empty secret).
+  if (!env.INTERNAL_CRON_SECRET || (req.headers.get('x-cron-secret') || '') !== env.INTERNAL_CRON_SECRET) {
     return new NextResponse('unauthorized', { status: 401 });
   }
   await dbConnect();

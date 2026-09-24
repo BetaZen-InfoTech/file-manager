@@ -3,9 +3,9 @@ import { Readable } from 'stream';
 import { dbConnect } from '@/lib/db';
 import { authenticate } from '@/lib/auth';
 import { can } from '@/lib/rbac';
-import { forbidden, isObjectIdHex, notFound, unauthorized, suspended } from '@/lib/http';
+import { forbidden, internalError, isObjectIdHex, notFound, unauthorized, suspended } from '@/lib/http';
 import { audit } from '@/lib/audit';
-import { storage } from '@/lib/storage';
+import { getObjectCached } from '@/lib/cache';
 import { FileModel } from '@/models/File';
 
 export const runtime = 'nodejs';
@@ -28,8 +28,20 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return forbidden();
 
   // Stream through the app — the object store is internal (127.0.0.1) and a
-  // presigned redirect would be unreachable by external API clients.
-  const obj = await storage.getObject(file.storageKey);
+  // presigned redirect would be unreachable by external API clients. Served from
+  // the VPS cache on a hit (see lib/cache.ts); falls back to storage on a fault.
+  let obj;
+  try {
+    obj = await getObjectCached(file.storageKey, {
+      mimeType: file.mimeType,
+      sizeHint: file.sizeBytes
+    });
+  } catch {
+    // The DB row exists but the storage object is unreadable/missing (orphaned
+    // row, out-of-band deletion). Return a clear JSON 500 rather than letting the
+    // throw become an opaque empty-body 500 the client can't parse.
+    return internalError('The file could not be read from storage.');
+  }
   await audit(p, req, { action: 'file.download', resourceType: 'file', resourceId: String(file._id) });
 
   const fileName = (file.originalName.split(/[\\/]/).pop() || 'download').replace(/"/g, '');

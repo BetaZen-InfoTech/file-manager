@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start -p ${PORT:-3000}",
     "lint": "next lint",
-    "test": "node --test tests/core-logic.test.js",
+    "test": "node --test tests/core-logic.test.js tests/cache-logic.test.js",
     "test:int": "vitest run tests/integration",
     "test:e2e": "playwright test",
     "start:ws": "node server/ws-gateway.js",

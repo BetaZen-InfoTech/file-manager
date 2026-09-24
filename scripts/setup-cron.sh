@@ -44,6 +44,8 @@ $MARKER
 0 4 * * 0 curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:$PORT/api/internal/cron/recount-usage >/dev/null
 # Orphan storage sweep weekly at Sunday 05:00 UTC
 0 5 * * 0 curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:$PORT/api/internal/cron/orphan-sweep >/dev/null
+# VPS file-cache cleanup (TTL purge + LRU eviction) every 15 minutes
+*/15 * * * * curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:$PORT/api/internal/cron/cache-cleanup >/dev/null
 # Daily backup at 02:30 UTC
 30 2 * * * APP_DIR=$APP_DIR $APP_DIR/scripts/backup.sh >> /var/log/fms-backup.log 2>&1
 $END_MARKER

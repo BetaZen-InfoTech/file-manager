@@ -64,7 +64,22 @@ export const env = {
   MAIL_FROM: process.env.MAIL_FROM || 'File Manager <no-reply@example.com>',
 
   INTERNAL_CRON_SECRET: process.env.INTERNAL_CRON_SECRET || '',
-  RATE_LIMIT_PER_MIN: Number(process.env.RATE_LIMIT_PER_MIN || 100)
+  RATE_LIMIT_PER_MIN: Number(process.env.RATE_LIMIT_PER_MIN || 100),
+
+  // ---- VPS filesystem cache (lib/cache.ts) ----
+  // A delivery cache in front of S3/MinIO so repeated downloads don't re-fetch
+  // the same object. Automatically a no-op for STORAGE_DRIVER=disk (the primary
+  // copy is already local). S3 stays the source of truth — clearing the cache
+  // only forces a re-fetch. Every value has a safe default; none are required.
+  FILE_CACHE_ENABLED: (process.env.FILE_CACHE_ENABLED || 'true') === 'true',
+  FILE_CACHE_ROOT: process.env.FILE_CACHE_ROOT || '/var/cache/file-manager',
+  FILE_CACHE_MAX_SIZE_GB: Number(process.env.FILE_CACHE_MAX_SIZE_GB || 5),
+  FILE_CACHE_MAX_FILE_SIZE_MB: Number(process.env.FILE_CACHE_MAX_FILE_SIZE_MB || 256),
+  FILE_CACHE_DEFAULT_TTL_SECONDS: Number(process.env.FILE_CACHE_DEFAULT_TTL_SECONDS || 86400),
+  FILE_CACHE_IMAGE_TTL_SECONDS: Number(process.env.FILE_CACHE_IMAGE_TTL_SECONDS || 604800),
+  FILE_CACHE_DOCUMENT_TTL_SECONDS: Number(process.env.FILE_CACHE_DOCUMENT_TTL_SECONDS || 86400),
+  FILE_CACHE_VIDEO_TTL_SECONDS: Number(process.env.FILE_CACHE_VIDEO_TTL_SECONDS || 259200),
+  FILE_CACHE_TEMP_TTL_SECONDS: Number(process.env.FILE_CACHE_TEMP_TTL_SECONDS || 3600)
 };
 
 export type Env = typeof env;

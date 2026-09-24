@@ -365,6 +365,17 @@ MAIL_FROM="File Manager <no-reply@$DOMAIN>"
 
 INTERNAL_CRON_SECRET=$INTERNAL_CRON_SECRET
 RATE_LIMIT_PER_MIN=100
+
+# VPS file cache (only used when STORAGE_DRIVER=s3/minio; no-op for disk).
+FILE_CACHE_ENABLED=true
+FILE_CACHE_ROOT=/var/cache/file-manager
+FILE_CACHE_MAX_SIZE_GB=5
+FILE_CACHE_MAX_FILE_SIZE_MB=256
+FILE_CACHE_DEFAULT_TTL_SECONDS=86400
+FILE_CACHE_IMAGE_TTL_SECONDS=604800
+FILE_CACHE_DOCUMENT_TTL_SECONDS=86400
+FILE_CACHE_VIDEO_TTL_SECONDS=259200
+FILE_CACHE_TEMP_TTL_SECONDS=3600
 EOF
   chmod 600 "$ENV_FILE"
   ok "wrote $ENV_FILE (chmod 600, owner=root)"
@@ -430,6 +441,11 @@ fi
 STORAGE_DISK_ROOT_VALUE="${STORAGE_DISK_ROOT:-/var/www}"
 mkdir -p "$STORAGE_DISK_ROOT_VALUE/vendors"
 ok "Disk storage ready at $STORAGE_DISK_ROOT_VALUE/vendors"
+
+# VPS file cache dir (used only for S3/MinIO storage; harmless to pre-create).
+FILE_CACHE_ROOT_VALUE="${FILE_CACHE_ROOT:-/var/cache/file-manager}"
+mkdir -p "$FILE_CACHE_ROOT_VALUE"
+ok "File cache dir ready at $FILE_CACHE_ROOT_VALUE"
 
 # ============================================================================
 # 9. npm deps + tests + build
@@ -652,6 +668,8 @@ $MARKER
 0 4 * * 0 curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:${PORT:-3000}/api/internal/cron/recount-usage >/dev/null
 # Orphan upload sweep weekly (Sunday 05:00 UTC)
 0 5 * * 0 curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:${PORT:-3000}/api/internal/cron/orphan-sweep >/dev/null
+# VPS file-cache cleanup (TTL purge + LRU eviction) every 15 minutes
+*/15 * * * * curl -fsS -H "x-cron-secret: $INTERNAL_CRON_SECRET" http://127.0.0.1:${PORT:-3000}/api/internal/cron/cache-cleanup >/dev/null
 # Daily backup at 02:30 UTC
 30 2 * * * APP_DIR=$APP_DIR $APP_DIR/scripts/backup.sh >> /var/log/fms-backup.log 2>&1
 $ENDM

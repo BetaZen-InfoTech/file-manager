@@ -50,12 +50,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     regenerated = await Promise.all(
       previously.map(async (l) => {
         const token = createLinkToken();
+        // Give the rotated link a FRESH lifetime instead of copying the old
+        // absolute `expiresAt`. Every link's expiry is created from a duration
+        // (expiresIn) or `neverExpire`, so preserving the original DURATION from
+        // now is faithful to how it was made — and, crucially, never produces a
+        // link that is born already-expired (which copying a past `expiresAt`
+        // did, e.g. rotating a short-TTL or already-expired temporary link).
+        let newExpiresAt: Date | null = null;
+        if (l.expiresAt) {
+          const createdMs = (l as any).createdAt ? new Date((l as any).createdAt).getTime() : Date.now();
+          const durationMs = new Date(l.expiresAt).getTime() - createdMs;
+          newExpiresAt = new Date(Date.now() + Math.max(durationMs, 60_000));
+        }
         const nl = await Link.create({
           vendorId: l.vendorId,
           fileId: l.fileId,
           type: l.type,
           token,
-          expiresAt: l.expiresAt,
+          expiresAt: newExpiresAt,
           maxDownloads: l.maxDownloads,
           requiredScope: l.requiredScope,
           // Carry over the access protection — a rotated link MUST keep the same

@@ -71,3 +71,6 @@ storage_local/
 
 # ── Claude memory directory should never be tracked ──────────────────────
 memory/
+
+# Local disk-storage test data (STORAGE_DRIVER=disk local runs)
+.localdata/

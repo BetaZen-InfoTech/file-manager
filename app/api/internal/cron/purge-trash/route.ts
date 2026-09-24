@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbConnect } from '@/lib/db';
 import { env } from '@/lib/env';
 import { storage } from '@/lib/storage';
+import { invalidate as cacheInvalidate } from '@/lib/cache';
 import { FileModel } from '@/models/File';
 import { decrementUsage } from '@/lib/quota';
 import { Bucket } from '@/models/Bucket';
@@ -9,7 +10,9 @@ import { Bucket } from '@/models/Bucket';
 export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
-  if ((req.headers.get('x-cron-secret') || '') !== env.INTERNAL_CRON_SECRET) {
+  // Fail closed when the secret is unset — otherwise an empty header would equal
+  // an empty configured secret and this destructive purge would run unauthenticated.
+  if (!env.INTERNAL_CRON_SECRET || (req.headers.get('x-cron-secret') || '') !== env.INTERNAL_CRON_SECRET) {
     return new NextResponse('unauthorized', { status: 401 });
   }
   await dbConnect();
@@ -29,6 +32,9 @@ export async function GET(req: NextRequest) {
     if (otherRefs === 0) {
       try {
         await storage.deleteObject(f.storageKey);
+        // Drop the now-deleted object from the VPS cache so we never serve bytes
+        // for a file the source of truth no longer has.
+        await cacheInvalidate(f.storageKey);
         if (Array.isArray(f.thumbnails)) {
           for (const t of f.thumbnails) {
             try {

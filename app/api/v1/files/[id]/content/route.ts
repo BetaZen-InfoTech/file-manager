@@ -7,6 +7,7 @@ import { badRequest, forbidden, isObjectIdHex, jsonOk, notFound, quotaExceeded, 
 import { audit } from '@/lib/audit';
 import { editContentSchema } from '@/lib/validation';
 import { storage } from '@/lib/storage';
+import { invalidate as cacheInvalidate } from '@/lib/cache';
 import { vendorFolderKeyById } from '@/lib/vendor-folder';
 import { checkQuota, incrementUsage } from '@/lib/quota';
 import { sha256, md5 } from '@/lib/crypto';
@@ -103,7 +104,10 @@ export async function PUT(req: NextRequest, { params }: { params: { id: string }
   // same refcount guard purge-trash uses; prevents an orphan leak per edit.
   if (oldKey && oldKey !== newKey) {
     const refs = await FileModel.countDocuments({ storageKey: oldKey, _id: { $ne: file._id }, status: { $ne: 'trashed' } });
-    if (refs === 0) await storage.deleteObject(oldKey).catch(() => {});
+    if (refs === 0) {
+      await storage.deleteObject(oldKey).catch(() => {});
+      await cacheInvalidate(oldKey); // stale cached bytes for the replaced content
+    }
   }
 
   await Promise.all([

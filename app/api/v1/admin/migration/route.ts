@@ -102,6 +102,9 @@ export async function POST(req: NextRequest) {
   }
 
   // ---- start: single-bucket file import ----
+  // Guard the client-supplied vendor id before it hits Mongoose — the schema only
+  // caps its length, so a non-castable value would throw a CastError → empty 500.
+  if (!isObjectIdHex(String(targetVendorId))) return badRequest('invalid targetVendorId');
   const vendor = await Vendor.findById(targetVendorId).lean();
   if (!vendor) return badRequest('target vendor not found');
 
