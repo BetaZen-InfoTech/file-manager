@@ -3,14 +3,28 @@ import fs from 'fs/promises';
 import path from 'path';
 import { authenticate } from './auth';
 import { dbConnect } from './db';
+import { env } from './env';
 import { Vendor } from '@/models/Vendor';
 
-// Where the file manager opens by default (configurable). Full filesystem is
-// browsable above/below it — this is just the landing directory. Defaults to the
-// per-vendor root so the admin lands on the vendor folders.
-export const FS_DEFAULT_PATH = process.env.FS_DEFAULT_PATH || '/var/www/vendors';
-// Optional jail. Default '/' = full server access (super-admin only). Set
-// FS_ROOT=/var/www to confine the file manager to a subtree.
+// The vendor file-manager root — where every vendor's private folder lives and
+// what the admin/vendor File Manager browses. By DEFAULT it follows the disk
+// storage root (<STORAGE_DISK_ROOT>/vendors) so the File Manager always points at
+// wherever the disk driver actually writes objects. This is what makes it work
+// off a root VPS: on cPanel / shared hosting you set STORAGE_DISK_ROOT (e.g.
+// ./data, since /var/www isn't writable) and the File Manager follows it
+// automatically instead of hitting an unwritable /var/www/vendors. An explicit
+// FS_VENDOR_ROOT still overrides. Always resolved to an ABSOLUTE path so a
+// relative STORAGE_DISK_ROOT (./data) resolves against the app's working dir.
+export const FS_VENDOR_ROOT = path.resolve(
+  process.env.FS_VENDOR_ROOT || path.join(env.STORAGE_DISK_ROOT, 'vendors')
+);
+
+// Where the File Manager opens by default — the vendor root above. The full
+// filesystem is still browsable above/below it (super-admin only).
+export const FS_DEFAULT_PATH = path.resolve(process.env.FS_DEFAULT_PATH || FS_VENDOR_ROOT);
+
+// Optional jail. Default '/' = full server access (super-admin only). Set FS_ROOT
+// to a subtree (e.g. your app dir) to confine the File Manager.
 export const FS_ROOT = process.env.FS_ROOT || '/';
 
 export interface FsEntry {
@@ -136,10 +150,9 @@ export async function copyPath(from: string, to: string): Promise<void> {
 }
 
 // ---- per-vendor jail -------------------------------------------------------
-// Each vendor gets a private home directory. The vendor file manager is
-// confined to it — they can't reach the parent, the server root, or another
-// vendor's files.
-export const FS_VENDOR_ROOT = process.env.FS_VENDOR_ROOT || '/var/www/vendors';
+// Each vendor gets a private home directory under FS_VENDOR_ROOT (defined at the
+// top of this file). The vendor file manager is confined to it — they can't reach
+// the parent, the server root, or another vendor's files.
 
 /**
  * The on-disk folder name for a vendor: its `username` when set (new vendors),

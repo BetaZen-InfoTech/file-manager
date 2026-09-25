@@ -74,3 +74,6 @@ memory/
 
 # Local disk-storage test data (STORAGE_DRIVER=disk local runs)
 .localdata/
+# Project-relative disk storage + cache (STORAGE_DISK_ROOT=./data, FILE_CACHE_ROOT=./cache)
+/data/
+/cache/

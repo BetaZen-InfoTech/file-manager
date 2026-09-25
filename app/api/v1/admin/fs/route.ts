@@ -7,16 +7,21 @@ import { audit } from '@/lib/audit';
 import { requireFsAdmin, safePath, listDir, FS_DEFAULT_PATH, FS_ROOT, FS_VENDOR_ROOT } from '@/lib/server-fs';
 import { executeFsOp } from '@/lib/fs-ops';
 import { listTrash } from '@/lib/fs-trash';
+import { env } from '@/lib/env';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 export const maxDuration = 300;
 
-// Recoverable trash location for the server file manager. The default is kept
-// inside FS_ROOT so a confined deployment (FS_ROOT set to a subtree) still has a
-// reachable trash; override with FS_TRASH_ROOT (must resolve within FS_ROOT).
+// Recoverable trash location for the server file manager. When FS_ROOT confines the
+// manager to a subtree, keep trash inside it. Otherwise default under the disk
+// storage root (writable on every host — a bare /var/www EACCES's on cPanel/shared
+// hosting where there's no root access). Override with FS_TRASH_ROOT.
 function adminTrashRoot(): string | null {
-  const fallback = FS_ROOT && FS_ROOT !== '/' ? path.join(FS_ROOT, '.fs-trash') : '/var/www/.fs-trash';
+  const fallback =
+    FS_ROOT && FS_ROOT !== '/'
+      ? path.join(FS_ROOT, '.fs-trash')
+      : path.join(path.resolve(env.STORAGE_DISK_ROOT), '.fs-trash');
   return safePath(process.env.FS_TRASH_ROOT || fallback);
 }
 
